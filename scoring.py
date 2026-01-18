@@ -93,7 +93,12 @@ def estimate_tokens(text: str) -> int:
 
 def _create_agent(model_name: str = DEFAULT_MODEL_NAME) -> Agent:
     """Create scoring agent with specified model."""
-    settings = GoogleModelSettings(temperature=0.2)
+    from google.genai.types import ThinkingLevel
+
+    settings = GoogleModelSettings(
+        temperature=0.2,
+        google_thinking_config={"thinking_level": ThinkingLevel.LOW},
+    )
     model = GoogleModel(model_name)
     return Agent(model, output_type=ScoringResponse, model_settings=settings)
 

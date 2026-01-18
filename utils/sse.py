@@ -1,7 +1,13 @@
 import json
 from typing import Any
 
+from pydantic import BaseModel
 
-def sse_event(data: dict[str, Any]) -> str:
+
+def sse_event(data: BaseModel | dict[str, Any]) -> str:
     """Format data as Server-Sent Event."""
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    if isinstance(data, BaseModel):
+        json_str = data.model_dump_json()
+    else:
+        json_str = json.dumps(data, ensure_ascii=False)
+    return f"data: {json_str}\n\n"

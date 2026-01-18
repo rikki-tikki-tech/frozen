@@ -5,6 +5,15 @@ from datetime import date
 
 from dotenv import load_dotenv
 from etg_client import AsyncETGClient, GuestRoom, Hotel
+from events import (
+    StatusEvent,
+    ScoringStartEvent,
+    ScoringBatchStartEvent,
+    ScoringRetryEvent,
+    ScoringProgressEvent,
+    ErrorEvent,
+    DoneEvent,
+)
 from hotels import fetch_hotel_content_async, filter_hotels_by_price, get_ostrovok_url, presort_hotels
 from reviews import fetch_reviews_async, filter_reviews
 from scoring import score_hotels
@@ -67,10 +76,9 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
 
     try:
         # 1. Searching
-        yield sse_event({
-            "type": "status",
-            "message": f"Собираю варианты с доступными номерами в {city} · {dates} · {guests_str}",
-        })
+        yield sse_event(StatusEvent(
+            message=f"Собираю варианты с доступными номерами в {city} · {dates} · {guests_str}",
+        ))
 
         results = await etg_client.search_hotels_by_region(
             region_id=request.region_id,
@@ -89,16 +97,14 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
         hotels = filter_hotels_by_price(hotels, request.min_price_per_night, request.max_price_per_night)
 
         # 3. Found hotels
-        yield sse_event({
-            "type": "status",
-            "message": f"Найдено {len(hotels)} отелей" + (f" (из {total_hotels})" if len(hotels) != total_hotels else ""),
-        })
+        yield sse_event(StatusEvent(
+            message=f"Найдено {len(hotels)} отелей" + (f" (из {total_hotels})" if len(hotels) != total_hotels else ""),
+        ))
 
         # 4. Fetching content
-        yield sse_event({
-            "type": "status",
-            "message": "Получаю дополнительную информацию об отелях",
-        })
+        yield sse_event(StatusEvent(
+            message="Получаю дополнительную информацию об отелях",
+        ))
 
         hids = [h["hid"] for h in hotels]
         content_map = await fetch_hotel_content_async(etg_client, hids, request.language or "ru")
@@ -110,10 +116,9 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
                 hotel["content"] = content
 
         # 5. Fetching reviews
-        yield sse_event({
-            "type": "status",
-            "message": "Получаю отзывы об отелях",
-        })
+        yield sse_event(StatusEvent(
+            message="Получаю отзывы об отелях",
+        ))
 
         language = request.language or "ru"
         raw_reviews = await fetch_reviews_async(etg_client, hids, language)
@@ -127,16 +132,14 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
 
         # 6. Scoring
         if request.user_preferences:
-            yield sse_event({
-                "type": "status",
-                "message": "Оцениваю отели по вашим предпочтениям",
-            })
+            yield sse_event(StatusEvent(
+                message="Оцениваю отели по вашим предпочтениям",
+            ))
             preferences = request.user_preferences
         else:
-            yield sse_event({
-                "type": "status",
-                "message": "Оцениваю отели",
-            })
+            yield sse_event(StatusEvent(
+                message="Оцениваю отели",
+            ))
             preferences = "Лучшее соотношение цены и качества, хорошие отзывы, удобное расположение"
 
         # Combine hotels with content and reviews
@@ -161,50 +164,45 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
         ):
             if result["type"] == "start":
                 start = result["start"]
-                yield sse_event({
-                    "type": "scoring_start",
-                    "total_hotels": start["total_hotels"],
-                    "total_batches": start["total_batches"],
-                    "batch_size": start["batch_size"],
-                    "estimated_tokens": start["estimated_tokens"],
-                    "message": f"Оцениваю {start['total_hotels']} отелей ({start['total_batches']} батчей, ~{start['estimated_tokens']:,} токенов)",
-                })
+                yield sse_event(ScoringStartEvent(
+                    total_hotels=start["total_hotels"],
+                    total_batches=start["total_batches"],
+                    batch_size=start["batch_size"],
+                    estimated_tokens=start["estimated_tokens"],
+                    message=f"Оцениваю {start['total_hotels']} отелей ({start['total_batches']} батчей, ~{start['estimated_tokens']:,} токенов)",
+                ))
             elif result["type"] == "batch_start":
                 bs = result["batch_start"]
-                yield sse_event({
-                    "type": "scoring_batch_start",
-                    "batch": bs["batch"],
-                    "total_batches": bs["total_batches"],
-                    "hotels_in_batch": bs["hotels_in_batch"],
-                    "estimated_tokens": bs["estimated_tokens"],
-                    "message": f"Батч {bs['batch']}/{bs['total_batches']}: {bs['hotels_in_batch']} отелей, ~{bs['estimated_tokens']:,} токенов",
-                })
+                yield sse_event(ScoringBatchStartEvent(
+                    batch=bs["batch"],
+                    total_batches=bs["total_batches"],
+                    hotels_in_batch=bs["hotels_in_batch"],
+                    estimated_tokens=bs["estimated_tokens"],
+                    message=f"Батч {bs['batch']}/{bs['total_batches']}: {bs['hotels_in_batch']} отелей, ~{bs['estimated_tokens']:,} токенов",
+                ))
             elif result["type"] == "retry":
                 retry = result["retry"]
-                yield sse_event({
-                    "type": "scoring_retry",
-                    "batch": retry["batch"],
-                    "attempt": retry["attempt"],
-                    "max_attempts": retry["max_attempts"],
-                    "message": f"Повторная попытка батча {retry['batch']}: {retry['attempt']}/{retry['max_attempts']}",
-                })
+                yield sse_event(ScoringRetryEvent(
+                    batch=retry["batch"],
+                    attempt=retry["attempt"],
+                    max_attempts=retry["max_attempts"],
+                    message=f"Повторная попытка батча {retry['batch']}: {retry['attempt']}/{retry['max_attempts']}",
+                ))
             elif result["type"] == "error":
                 error = result["error"]
-                yield sse_event({
-                    "type": "error",
-                    "error_type": error["error_type"],
-                    "message": error["message"],
-                    "batch": error["batch"],
-                })
+                yield sse_event(ErrorEvent(
+                    error_type=error["error_type"],
+                    message=error["message"],
+                    batch=error["batch"],
+                ))
                 return
             elif result["type"] == "progress":
                 progress = result["progress"]
-                yield sse_event({
-                    "type": "scoring_progress",
-                    "processed": progress["processed"],
-                    "total": progress["total"],
-                    "message": f"Оценено {progress['processed']} из {progress['total']} отелей",
-                })
+                yield sse_event(ScoringProgressEvent(
+                    processed=progress["processed"],
+                    total=progress["total"],
+                    message=f"Оценено {progress['processed']} из {progress['total']} отелей",
+                ))
             elif result["type"] == "done":
                 scoring_results = result["results"]
 
@@ -228,17 +226,15 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
             )
 
         # 7. Done
-        yield sse_event({
-            "type": "done",
-            "hotels": top_hotels,
-        })
+        yield sse_event(DoneEvent(
+            hotels=top_hotels,
+        ))
 
     except Exception as e:
-        yield sse_event({
-            "type": "error",
-            "error_type": type(e).__name__,
-            "message": str(e),
-        })
+        yield sse_event(ErrorEvent(
+            error_type=type(e).__name__,
+            message=str(e),
+        ))
 
 
 @app.post("/hotels/search/stream")
