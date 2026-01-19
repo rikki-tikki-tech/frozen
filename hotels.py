@@ -1,6 +1,6 @@
 from etg_client import AsyncETGClient, ETGClient, Hotel, HotelContent
 
-CONTENT_BATCH_SIZE = 1000
+CONTENT_BATCH_SIZE = 100
 
 # Country code to Ostrovok URL path mapping
 COUNTRY_URL_MAP = {
@@ -31,40 +31,54 @@ def get_hotel_nights(hotel: Hotel) -> int:
 
 
 def get_hotel_price(hotel: Hotel) -> float | None:
-    """Extract median total price from hotel rates."""
+    """Extract average price per night from cheapest rate's daily_prices."""
     rates = hotel.get("rates", [])
     if not rates:
         return None
 
-    prices: list[float] = []
+    # Find the cheapest rate by show_amount
+    cheapest_rate = None
+    min_price = float('inf')
+
     for rate in rates:
         payment_types = rate.get("payment_options", {}).get("payment_types", [])
         if payment_types:
             try:
                 price = float(payment_types[0].get("show_amount", 0))
-                if price > 0:
-                    prices.append(price)
+                if price > 0 and price < min_price:
+                    min_price = price
+                    cheapest_rate = rate
             except (ValueError, TypeError):
                 continue
+
+    if cheapest_rate is None:
+        return None
+
+    # Get daily_prices from the cheapest rate
+    daily_prices = cheapest_rate.get("daily_prices", [])
+    if not daily_prices:
+        return None
+
+    # Calculate average price per night
+    prices = []
+    for p in daily_prices:
+        try:
+            price = float(p)
+            if price > 0:
+                prices.append(price)
+        except (ValueError, TypeError):
+            continue
 
     if not prices:
         return None
 
-    # Return median price
-    prices.sort()
-    mid = len(prices) // 2
-    if len(prices) % 2 == 0:
-        return (prices[mid - 1] + prices[mid]) / 2
-    return prices[mid]
+    return sum(prices) / len(prices)
 
 
 def get_hotel_price_per_night(hotel: Hotel) -> float | None:
-    """Extract median price per night from hotel rates."""
-    total_price = get_hotel_price(hotel)
-    if total_price is None:
-        return None
-    nights = get_hotel_nights(hotel)
-    return total_price / nights
+    """Extract average price per night from cheapest rate."""
+    # get_hotel_price now returns average price per night directly
+    return get_hotel_price(hotel)
 
 
 def filter_hotels_by_price(

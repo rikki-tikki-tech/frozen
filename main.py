@@ -1,4 +1,5 @@
 import os
+import random
 from typing import AsyncIterator
 
 from datetime import date
@@ -147,6 +148,13 @@ async def _search_stream(request: HotelSearchRequest) -> AsyncIterator[str]:
 
         # 2. Filter by price
         hotels = filter_hotels_by_price(hotels, request.min_price_per_night, request.max_price_per_night)
+
+        # 2.1. Remove very cheap hotels (< 30 EUR per night)
+        hotels = filter_hotels_by_price(hotels, min_price_per_night=30.0)
+
+        # 2.2. Limit to 500 random hotels if more than that
+        if len(hotels) > 500:
+            hotels = random.sample(hotels, 500)
 
         # 3. Found hotels
         yield sse_event(StatusEvent(
