@@ -4,7 +4,7 @@ from typing import AsyncIterator
 from datetime import date
 
 from dotenv import load_dotenv
-from etg_client import AsyncETGClient, GuestRoom, Hotel
+from etg_client import AsyncETGClient, GuestRoom, Hotel, Region
 from events import (
     StatusEvent,
     ScoringStartEvent,
@@ -18,7 +18,7 @@ from hotels import fetch_hotel_content_async, filter_hotels_by_price, get_ostrov
 from reviews import fetch_reviews_async, filter_reviews
 from scoring import score_hotels
 from utils import format_dates, format_guests, sse_event
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
@@ -45,6 +45,58 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
+
+
+# =============================================================================
+# Region Suggest API
+# =============================================================================
+
+
+class RegionItem(BaseModel):
+    """Регион из результатов поиска."""
+    id: int = Field(description="ID региона")
+    name: str = Field(description="Название региона")
+    type: str = Field(description="Тип региона (City, Country, Airport и т.д.)")
+    country_code: str = Field(description="Код страны (ISO 3166-1 alpha-2)")
+
+
+class RegionSuggestResponse(BaseModel):
+    """Ответ на запрос поиска региона."""
+    query: str = Field(description="Исходный поисковый запрос")
+    regions: list[RegionItem] = Field(description="Все найденные регионы")
+    city: RegionItem | None = Field(description="Первый найденный город (или None)")
+
+
+@app.get("/regions/suggest", response_model=RegionSuggestResponse)
+async def suggest_regions(
+    query: str = Query(min_length=1, description="Поисковый запрос (название города)"),
+    language: str = Query(default="ru", pattern=r"^[a-z]{2}$", description="Код языка (ISO 639-1)"),
+) -> RegionSuggestResponse:
+    """
+    Поиск региона по названию.
+
+    Возвращает список регионов и отдельно первый найденный город.
+    """
+    raw_regions: list[Region] = await etg_client.suggest_region(query, language)
+
+    regions = [
+        RegionItem(
+            id=r["id"],
+            name=r["name"],
+            type=r["type"],
+            country_code=r.get("country_code", ""),
+        )
+        for r in raw_regions
+    ]
+
+    # Найти первый город
+    city = next((r for r in regions if r.type == "City"), None)
+
+    return RegionSuggestResponse(
+        query=query,
+        regions=regions,
+        city=city,
+    )
 
 
 class HotelSearchRequest(BaseModel):

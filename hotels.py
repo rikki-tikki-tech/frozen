@@ -1,6 +1,6 @@
 from etg_client import AsyncETGClient, ETGClient, Hotel, HotelContent
 
-CONTENT_BATCH_SIZE = 100
+CONTENT_BATCH_SIZE = 1000
 
 # Country code to Ostrovok URL path mapping
 COUNTRY_URL_MAP = {
@@ -20,36 +20,70 @@ def get_ostrovok_url(hotel_id: str, hid: int, city: str, country_code: str) -> s
     return f"https://ostrovok.ru/hotel/{country}/{city_slug}/mid{hid}/{hotel_id}/"
 
 
-def get_hotel_price(hotel: Hotel) -> float | None:
-    """Extract minimum price from hotel rates."""
+def get_hotel_nights(hotel: Hotel) -> int:
+    """Get number of nights from daily_prices."""
     rates = hotel.get("rates", [])
     if rates:
-        payment_types = rates[0].get("payment_options", {}).get("payment_types", [])
+        daily_prices = rates[0].get("daily_prices", [])
+        if daily_prices:
+            return len(daily_prices)
+    return 1
+
+
+def get_hotel_price(hotel: Hotel) -> float | None:
+    """Extract median total price from hotel rates."""
+    rates = hotel.get("rates", [])
+    if not rates:
+        return None
+
+    prices: list[float] = []
+    for rate in rates:
+        payment_types = rate.get("payment_options", {}).get("payment_types", [])
         if payment_types:
             try:
-                return float(payment_types[0].get("show_amount", 0))
+                price = float(payment_types[0].get("show_amount", 0))
+                if price > 0:
+                    prices.append(price)
             except (ValueError, TypeError):
-                return None
-    return None
+                continue
+
+    if not prices:
+        return None
+
+    # Return median price
+    prices.sort()
+    mid = len(prices) // 2
+    if len(prices) % 2 == 0:
+        return (prices[mid - 1] + prices[mid]) / 2
+    return prices[mid]
+
+
+def get_hotel_price_per_night(hotel: Hotel) -> float | None:
+    """Extract median price per night from hotel rates."""
+    total_price = get_hotel_price(hotel)
+    if total_price is None:
+        return None
+    nights = get_hotel_nights(hotel)
+    return total_price / nights
 
 
 def filter_hotels_by_price(
     hotels: list[Hotel],
-    min_price: float | None = None,
-    max_price: float | None = None,
+    min_price_per_night: float | None = None,
+    max_price_per_night: float | None = None,
 ) -> list[Hotel]:
-    """Filter hotels by price range."""
-    if min_price is None and max_price is None:
+    """Filter hotels by price per night range."""
+    if min_price_per_night is None and max_price_per_night is None:
         return hotels
 
     filtered = []
     for hotel in hotels:
-        price = get_hotel_price(hotel)
-        if price is None:
+        price_per_night = get_hotel_price_per_night(hotel)
+        if price_per_night is None:
             continue
-        if min_price is not None and price < min_price:
+        if min_price_per_night is not None and price_per_night < min_price_per_night:
             continue
-        if max_price is not None and price > max_price:
+        if max_price_per_night is not None and price_per_night > max_price_per_night:
             continue
         filtered.append(hotel)
 
