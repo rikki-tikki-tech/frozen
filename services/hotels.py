@@ -1,6 +1,11 @@
 """Hotel data processing, filtering, and pre-scoring."""
 
+from collections.abc import Awaitable, Callable
+
 from etg import AsyncETGClient, ETGClient, Hotel, HotelContent
+
+# Callback type: (batch_num, total_batches, hotels_loaded, total_hotels) -> None
+ContentProgressCallback = Callable[[int, int, int, int], Awaitable[None]]
 
 CONTENT_BATCH_SIZE = 100
 
@@ -123,15 +128,21 @@ async def fetch_hotel_content_async(
     client: AsyncETGClient,
     hids: list[int],
     language: str,
+    on_progress: ContentProgressCallback | None = None,
 ) -> dict[int, HotelContent]:
     """Fetch content for hotels in batches (async)."""
     content_map: dict[int, HotelContent] = {}
+    total = len(hids)
+    total_batches = (total + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
 
-    for i in range(0, len(hids), CONTENT_BATCH_SIZE):
+    for batch_num, i in enumerate(range(0, total, CONTENT_BATCH_SIZE), 1):
         batch = hids[i : i + CONTENT_BATCH_SIZE]
         content = await client.get_hotel_content(hids=batch, language=language)
         for hotel in content:
             content_map[hotel["hid"]] = hotel
+
+        if on_progress:
+            await on_progress(batch_num, total_batches, len(content_map), total)
 
     return content_map
 
