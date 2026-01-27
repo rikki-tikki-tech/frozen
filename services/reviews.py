@@ -1,12 +1,13 @@
+"""Review fetching, filtering, and segmentation."""
+
 from datetime import datetime, timedelta
 from typing import TypedDict
 
-from etg_client import AsyncETGClient, ETGAPIError, ETGClient
+from etg import AsyncETGClient, ETGAPIError, ETGClient
 
 REVIEWS_BATCH_SIZE = 100
 BASE_REVIEW_LANGUAGES = ["ru", "en"]
 
-# Default settings
 DEFAULT_MAX_AGE_YEARS = 5
 DEFAULT_REVIEWS_PER_SEGMENT = 30
 DEFAULT_NEUTRAL_THRESHOLD = 7.0
@@ -104,18 +105,15 @@ def filter_reviews(
     for hid, reviews in reviews_map.items():
         total_reviews = len(reviews)
 
-        # Filter by date and rating > 0
         valid_reviews = [
             r for r in reviews
             if r["created"] >= cutoff_date and r["rating"] > 0
         ]
 
-        # Split by segments
         positive = [r for r in valid_reviews if r["rating"] >= neutral_threshold]
         neutral = [r for r in valid_reviews if negative_threshold <= r["rating"] < neutral_threshold]
         negative = [r for r in valid_reviews if r["rating"] < negative_threshold]
 
-        # Sort each segment by date (newest first) and limit
         positive.sort(key=lambda x: x["created"], reverse=True)
         neutral.sort(key=lambda x: x["created"], reverse=True)
         negative.sort(key=lambda x: x["created"], reverse=True)

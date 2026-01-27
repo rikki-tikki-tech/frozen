@@ -1,3 +1,5 @@
+"""LLM-based hotel scoring using Google Gemini."""
+
 import asyncio
 import json
 from typing import Any, AsyncIterator, TypedDict
@@ -37,7 +39,7 @@ class ScoringBatchStart(TypedDict):
     total_batches: int
     hotels_in_batch: int
     estimated_tokens: int
-    prompt: str  # Full prompt for debugging
+    prompt: str
 
 
 class ScoringRetry(TypedDict):
@@ -77,12 +79,10 @@ Rules:
 - Do not include markdown or extra text.
 """
 
-# Default settings
 DEFAULT_MODEL_NAME = "gemini-3-flash-preview"
 DEFAULT_BATCH_SIZE = 25
 DEFAULT_RETRIES = 3
 
-# Approximate tokens per character (conservative estimate for multilingual content)
 CHARS_PER_TOKEN = 3
 
 
@@ -110,13 +110,11 @@ def prepare_hotel_for_llm(
     max_price: float | None = None,
 ) -> dict[str, Any]:
     """Prepare hotel data for LLM scoring with key information."""
-    # Extract rates info (room types, meals, prices) - filtered by price range
     rates_info = []
     for rate in hotel.get("rates", []):
         pt = rate.get("payment_options", {}).get("payment_types", [])
         price_str = pt[0].get("show_amount") if pt else None
 
-        # Filter by price range
         if price_str is not None:
             try:
                 price = float(price_str)
@@ -127,7 +125,6 @@ def prepare_hotel_for_llm(
             except (ValueError, TypeError):
                 pass
 
-        # Limit to 5 rates
         if len(rates_info) >= 5:
             break
 
@@ -140,7 +137,6 @@ def prepare_hotel_for_llm(
             "has_breakfast": meal_data.get("has_breakfast", False),
         }
 
-        # Add cancellation info if available
         cancel = None
         for p in pt:
             cp = p.get("cancellation_penalties", {})
@@ -152,13 +148,11 @@ def prepare_hotel_for_llm(
 
         rates_info.append(rate_info)
 
-    # Extract amenities
     amenities = []
     for g in hotel.get("amenity_groups", []):
         for a in g.get("amenities", []):
             amenities.append(a.get("name", "") if isinstance(a, dict) else str(a))
 
-    # Extract reviews
     reviews = []
     hr = hotel.get("reviews", {})
     for r in (hr.get("reviews", []) if isinstance(hr, dict) else [])[:10]:
@@ -205,11 +199,7 @@ async def score_hotels(
     """
     Score hotels based on user preferences using LLM.
 
-    Yields:
-        ScoringResult with type="start" before processing begins
-        ScoringResult with type="retry" when a retry occurs
-        ScoringResult with type="progress" after each batch
-        ScoringResult with type="done" and final results at the end
+    Yields ScoringResult events: start, batch_start, retry, progress, error, done.
     """
     agent = _create_agent(model_name)
 
@@ -221,14 +211,12 @@ async def score_hotels(
     total = len(hotels_for_llm)
     total_batches = (total + batch_size - 1) // batch_size
 
-    # Estimate total tokens
     all_prompts_text = ""
     for i in range(0, total, batch_size):
         batch = hotels_for_llm[i : i + batch_size]
         all_prompts_text += _build_prompt(batch, user_preferences)
     estimated_tokens = estimate_tokens(all_prompts_text)
 
-    # Yield start info
     yield {
         "type": "start",
         "start": {
@@ -252,7 +240,6 @@ async def score_hotels(
         prompt = _build_prompt(batch, user_preferences)
         batch_tokens = estimate_tokens(prompt)
 
-        # Yield batch start info
         yield {
             "type": "batch_start",
             "start": None,
@@ -279,7 +266,6 @@ async def score_hotels(
             except (ValidationError, ValueError) as e:
                 last_error = e
                 if attempt < retries - 1:
-                    # Yield retry notification
                     yield {
                         "type": "retry",
                         "start": None,
@@ -297,7 +283,6 @@ async def score_hotels(
                     await asyncio.sleep(1)
                     continue
             except Exception as e:
-                # Fatal error (API error, network error, etc.) - stop processing
                 yield {
                     "type": "error",
                     "start": None,
@@ -318,7 +303,6 @@ async def score_hotels(
 
         processed += len(batch)
 
-        # Yield progress (batch completed)
         yield {
             "type": "progress",
             "start": None,
@@ -336,7 +320,6 @@ async def score_hotels(
 
     all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-    # Yield final results
     yield {
         "type": "done",
         "start": None,

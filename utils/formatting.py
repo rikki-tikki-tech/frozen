@@ -1,6 +1,6 @@
 from datetime import date
 
-from etg_client import GuestRoom
+from etg import GuestRoom
 
 
 def format_guests(guests: list[GuestRoom]) -> str:
