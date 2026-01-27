@@ -33,38 +33,6 @@ from .events import (
 )
 from .schemas import HotelSearchRequest
 
-LANG_NAMES: dict[str, str] = {
-    "ru": "русском",
-    "en": "английском",
-    "de": "немецком",
-    "fr": "французском",
-    "es": "испанском",
-    "it": "итальянском",
-    "pt": "португальском",
-    "zh": "китайском",
-    "ja": "японском",
-    "ko": "корейском",
-    "ar": "арабском",
-    "tr": "турецком",
-    "pl": "польском",
-    "nl": "нидерландском",
-    "cs": "чешском",
-    "sv": "шведском",
-    "da": "датском",
-    "fi": "финском",
-    "no": "норвежском",
-    "hu": "венгерском",
-    "el": "греческом",
-    "th": "тайском",
-    "vi": "вьетнамском",
-    "uk": "украинском",
-    "he": "иврите",
-}
-
-
-def _lang_name(code: str) -> str:
-    return LANG_NAMES.get(code, code)
-
 
 async def search_stream(
     request: HotelSearchRequest,
@@ -177,7 +145,7 @@ async def search_stream(
                 total_batches=total_batches,
                 hotels_loaded=loaded,
                 total_hotels=total,
-                message=f"Отзывы на {_lang_name(lang)}: {loaded}/{total} отелей (батч {batch}/{total_batches})",
+                message=f"Отзывы [{lang}]: {loaded}/{total} отелей (батч {batch}/{total_batches})",
             )))
 
         raw_reviews = await fetch_reviews_async(
