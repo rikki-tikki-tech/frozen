@@ -9,8 +9,10 @@ ETG_KEY_ID: str = os.environ["ETG_KEY_ID"]
 ETG_API_KEY: str = os.environ["ETG_API_KEY"]
 ETG_REQUEST_TIMEOUT: float = float(os.environ.get("ETG_REQUEST_TIMEOUT", "30.0"))
 
-# Gemini
+# LLM Scoring
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
+ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+SCORING_MODEL: str = os.environ.get("SCORING_MODEL", "gemini-3-flash-preview")
 
 # CORS
 CORS_ORIGINS: list[str] = [

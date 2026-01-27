@@ -1,4 +1,4 @@
-"""LLM-based hotel scoring using Google Gemini."""
+"""LLM-based hotel scoring using Google Gemini or Anthropic Claude."""
 
 import asyncio
 import json
@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator, TypedDict
 
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 
@@ -79,11 +80,21 @@ Rules:
 - Do not include markdown or extra text.
 """
 
-DEFAULT_MODEL_NAME = "gemini-3-flash-preview"
 DEFAULT_BATCH_SIZE = 25
 DEFAULT_RETRIES = 3
 
 CHARS_PER_TOKEN = 3
+
+ANTHROPIC_MODELS = {"claude-haiku-4-5", "claude-sonnet-4", "claude-opus-4"}
+
+
+def _get_default_model() -> str:
+    from config import SCORING_MODEL
+    return SCORING_MODEL
+
+
+def _is_anthropic_model(model_name: str) -> bool:
+    return model_name.startswith("claude-")
 
 
 def estimate_tokens(text: str) -> int:
@@ -91,8 +102,19 @@ def estimate_tokens(text: str) -> int:
     return len(text) // CHARS_PER_TOKEN
 
 
-def _create_agent(model_name: str = DEFAULT_MODEL_NAME) -> Agent:
-    """Create scoring agent with specified model."""
+def _create_agent(model_name: str | None = None) -> Agent:
+    """Create scoring agent with specified model (Gemini or Claude)."""
+    if model_name is None:
+        model_name = _get_default_model()
+
+    if _is_anthropic_model(model_name):
+        settings = AnthropicModelSettings(
+            temperature=0.2,
+            timeout=300.0,
+        )
+        model = AnthropicModel(model_name)
+        return Agent(model, output_type=ScoringResponse, model_settings=settings)
+
     from google.genai.types import ThinkingLevel
 
     settings = GoogleModelSettings(
@@ -193,7 +215,7 @@ async def score_hotels(
     min_price: float | None = None,
     max_price: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    model_name: str = DEFAULT_MODEL_NAME,
+    model_name: str | None = None,
     retries: int = DEFAULT_RETRIES,
 ) -> AsyncIterator[ScoringResult]:
     """
