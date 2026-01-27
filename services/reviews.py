@@ -1,9 +1,13 @@
 """Review fetching, filtering, and segmentation."""
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import TypedDict
 
 from etg import AsyncETGClient, ETGAPIError, ETGClient
+
+# Callback type: (language, batch_num, total_batches, hotels_loaded, total_hotels) -> None
+ReviewsProgressCallback = Callable[[str, int, int, int, int], Awaitable[None]]
 
 REVIEWS_BATCH_SIZE = 100
 BASE_REVIEW_LANGUAGES = ["ru", "en"]
@@ -60,6 +64,7 @@ async def fetch_reviews_async(
     client: AsyncETGClient,
     hids: list[int],
     language: str,
+    on_progress: ReviewsProgressCallback | None = None,
 ) -> dict[int, list]:
     """Fetch reviews for hotels in multiple languages (async)."""
     languages = BASE_REVIEW_LANGUAGES.copy()
@@ -67,10 +72,12 @@ async def fetch_reviews_async(
         languages.append(language)
 
     reviews_map: dict[int, list] = {}
+    total = len(hids)
 
     for lang in languages:
+        total_batches = (total + REVIEWS_BATCH_SIZE - 1) // REVIEWS_BATCH_SIZE
         try:
-            for i in range(0, len(hids), REVIEWS_BATCH_SIZE):
+            for batch_num, i in enumerate(range(0, total, REVIEWS_BATCH_SIZE), 1):
                 batch = hids[i : i + REVIEWS_BATCH_SIZE]
                 hotels_reviews = await client.get_hotel_reviews(hids=batch, language=lang)
 
@@ -84,6 +91,10 @@ async def fetch_reviews_async(
                     if hid not in reviews_map:
                         reviews_map[hid] = []
                     reviews_map[hid].extend(reviews)
+
+                if on_progress:
+                    loaded = min((batch_num) * REVIEWS_BATCH_SIZE, total)
+                    await on_progress(lang, batch_num, total_batches, loaded, total)
         except ETGAPIError:
             continue
 
