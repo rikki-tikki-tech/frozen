@@ -1,4 +1,6 @@
-from etg_client import AsyncETGClient, ETGClient, Hotel, HotelContent
+"""Hotel data processing, filtering, and pre-scoring."""
+
+from etg import AsyncETGClient, ETGClient, Hotel, HotelContent
 
 CONTENT_BATCH_SIZE = 100
 
@@ -36,7 +38,6 @@ def get_hotel_price(hotel: Hotel) -> float | None:
     if not rates:
         return None
 
-    # Find the cheapest rate by show_amount
     cheapest_rate = None
     min_price = float('inf')
 
@@ -54,12 +55,10 @@ def get_hotel_price(hotel: Hotel) -> float | None:
     if cheapest_rate is None:
         return None
 
-    # Get daily_prices from the cheapest rate
     daily_prices = cheapest_rate.get("daily_prices", [])
     if not daily_prices:
         return None
 
-    # Calculate average price per night
     prices = []
     for p in daily_prices:
         try:
@@ -77,7 +76,6 @@ def get_hotel_price(hotel: Hotel) -> float | None:
 
 def get_hotel_price_per_night(hotel: Hotel) -> float | None:
     """Extract average price per night from cheapest rate."""
-    # get_hotel_price now returns average price per night directly
     return get_hotel_price(hotel)
 
 
@@ -149,20 +147,16 @@ def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
     """
     score = 0.0
 
-    # Stars (0-25)
     stars = hotel.get("star_rating", 0)
     score += stars * 5
 
-    # Reviews data
     if reviews_data:
         total = reviews_data.get("total_reviews", 0)
         positive = reviews_data.get("positive_count", 0)
 
-        # Positive ratio (0-50)
         if total > 0:
             score += (positive / total) * 50
 
-        # Reviews count bonus (0-25)
         score += min(total, 25)
 
     return score
@@ -173,18 +167,7 @@ def presort_hotels(
     reviews_map: dict[int, dict],
     limit: int = 100,
 ) -> list[dict]:
-    """
-    Sort hotels by pre-score and return top N.
-
-    Args:
-        hotels: List of hotel dicts (with content merged)
-        reviews_map: Reviews data by hid
-        limit: Maximum number of hotels to return
-
-    Returns:
-        Top hotels sorted by pre-score (descending)
-    """
-    # Calculate prescore for each hotel
+    """Sort hotels by pre-score and return top N."""
     scored = []
     for hotel in hotels:
         hid = hotel.get("hid")
@@ -193,7 +176,6 @@ def presort_hotels(
         hotel["prescore"] = prescore
         scored.append(hotel)
 
-    # Sort by prescore descending
     scored.sort(key=lambda h: h.get("prescore", 0), reverse=True)
 
     return scored[:limit]
