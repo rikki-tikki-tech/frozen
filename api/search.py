@@ -2,7 +2,8 @@
 
 import asyncio
 import random
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 from etg import AsyncETGClient, Hotel
 from services import (
@@ -68,7 +69,9 @@ async def search_stream(
         total_hotels: int = results.get("total_hotels", len(hotels))
 
         # Price filtering
-        hotels = filter_hotels_by_price(hotels, request.min_price_per_night, request.max_price_per_night)
+        hotels = filter_hotels_by_price(
+            hotels, request.min_price_per_night, request.max_price_per_night
+        )
         hotels = filter_hotels_by_price(hotels, min_price_per_night=30.0)
 
         total_after_filter = len(hotels)
@@ -104,13 +107,16 @@ async def search_stream(
         # =====================================================================
         hids = [h["hid"] for h in hotels]
 
-        async def on_content_progress(batch: int, total_batches: int, loaded: int, total: int) -> None:
+        async def on_content_progress(
+            batch: int, total_batches: int, loaded: int, total: int,
+        ) -> None:
+            msg = f"Загрузка контента: {loaded}/{total} отелей (батч {batch}/{total_batches})"
             event_queue.put_nowait(sse_event(ContentProgressEvent(
                 batch=batch,
                 total_batches=total_batches,
                 hotels_loaded=loaded,
                 total_hotels=total,
-                message=f"Загрузка контента: {loaded}/{total} отелей (батч {batch}/{total_batches})",
+                message=msg,
             )))
 
         content_map = await fetch_hotel_content_async(
@@ -131,21 +137,24 @@ async def search_stream(
         for hotel in hotels:
             content = content_map.get(hotel["hid"])
             if content:
-                hotel["content"] = content
+                hotel["content"] = content  # type: ignore[typeddict-unknown-key]
 
         # =====================================================================
         # Phase 3: Fetch and filter reviews
         # =====================================================================
         language = request.language or "ru"
 
-        async def on_reviews_progress(lang: str, batch: int, total_batches: int, loaded: int, total: int) -> None:
+        async def on_reviews_progress(
+            lang: str, batch: int, total_batches: int, loaded: int, total: int,
+        ) -> None:
+            msg = f"Отзывы [{lang}]: {loaded}/{total} отелей (батч {batch}/{total_batches})"
             event_queue.put_nowait(sse_event(ReviewsProgressEvent(
                 language=lang,
                 batch=batch,
                 total_batches=total_batches,
                 hotels_loaded=loaded,
                 total_hotels=total,
-                message=f"Отзывы [{lang}]: {loaded}/{total} отелей (батч {batch}/{total_batches})",
+                message=msg,
             )))
 
         raw_reviews = await fetch_reviews_async(
@@ -179,7 +188,7 @@ async def search_stream(
             negative_count=total_negative,
             message=(
                 f"Обработано {total_reviews_raw} отзывов → {total_reviews_filtered} релевантных "
-                f"({total_positive} позитивных, {total_neutral} нейтральных, {total_negative} негативных) "
+                f"({total_positive}+/{total_neutral}~/{total_negative}-) "
                 f"для {hotels_with_reviews} отелей"
             ),
         ))
@@ -187,7 +196,7 @@ async def search_stream(
         for hotel in hotels:
             reviews = reviews_map.get(hotel["hid"])
             if reviews:
-                hotel["reviews"] = reviews
+                hotel["reviews"] = reviews  # type: ignore[typeddict-unknown-key]
 
         # =====================================================================
         # Phase 4: Pre-scoring and selection for LLM
@@ -205,7 +214,9 @@ async def search_stream(
                 "reviews": reviews_map.get(hotel["hid"], {}),
             })
 
-        top_hotels = presort_hotels(combined, reviews_map, limit=100)
+        top_hotels = presort_hotels(
+            combined, cast("dict[int, dict[str, Any]]", reviews_map), limit=100
+        )
 
         # Compute prescore stats
         prescores = [h.get("prescore", 0.0) for h in top_hotels]
@@ -226,7 +237,7 @@ async def search_stream(
         # =====================================================================
         # Phase 5: LLM Scoring
         # =====================================================================
-        scoring_results = []
+        scoring_results: list[dict[str, Any]] = []
         async for result in score_hotels(
             top_hotels,
             preferences,
@@ -234,33 +245,43 @@ async def search_stream(
             min_price=request.min_price_per_night,
             max_price=request.max_price_per_night,
         ):
-            if result["type"] == "start":
+            if result["type"] == "start" and result["start"] is not None:
                 start = result["start"]
+                h = start["total_hotels"]
+                b = start["total_batches"]
+                t = start["estimated_tokens"]
                 yield sse_event(ScoringStartEvent(
-                    total_hotels=start["total_hotels"],
-                    total_batches=start["total_batches"],
+                    total_hotels=h,
+                    total_batches=b,
                     batch_size=start["batch_size"],
-                    estimated_tokens=start["estimated_tokens"],
-                    message=f"AI-оценка {start['total_hotels']} отелей: {start['total_batches']} батчей, ~{start['estimated_tokens']:,} токенов",
+                    estimated_tokens=t,
+                    message=f"AI-оценка {h} отелей: {b} батчей, ~{t:,} токенов",
                 ))
-            elif result["type"] == "batch_start":
+            elif result["type"] == "batch_start" and result["batch_start"] is not None:
                 bs = result["batch_start"]
+                bn = bs["batch"]
+                tb = bs["total_batches"]
+                hb = bs["hotels_in_batch"]
+                et = bs["estimated_tokens"]
                 yield sse_event(ScoringBatchStartEvent(
-                    batch=bs["batch"],
-                    total_batches=bs["total_batches"],
-                    hotels_in_batch=bs["hotels_in_batch"],
-                    estimated_tokens=bs["estimated_tokens"],
-                    message=f"Батч {bs['batch']}/{bs['total_batches']}: оцениваю {bs['hotels_in_batch']} отелей (~{bs['estimated_tokens']:,} токенов)",
+                    batch=bn,
+                    total_batches=tb,
+                    hotels_in_batch=hb,
+                    estimated_tokens=et,
+                    message=f"Батч {bn}/{tb}: оцениваю {hb} отелей (~{et:,} токенов)",
                 ))
-            elif result["type"] == "retry":
+            elif result["type"] == "retry" and result["retry"] is not None:
                 retry = result["retry"]
+                bn = retry["batch"]
+                at = retry["attempt"]
+                ma = retry["max_attempts"]
                 yield sse_event(ScoringRetryEvent(
-                    batch=retry["batch"],
-                    attempt=retry["attempt"],
-                    max_attempts=retry["max_attempts"],
-                    message=f"Повтор батча {retry['batch']}: попытка {retry['attempt']}/{retry['max_attempts']}",
+                    batch=bn,
+                    attempt=at,
+                    max_attempts=ma,
+                    message=f"Повтор батча {bn}: попытка {at}/{ma}",
                 ))
-            elif result["type"] == "error":
+            elif result["type"] == "error" and result["error"] is not None:
                 error = result["error"]
                 yield sse_event(ErrorEvent(
                     error_type=error["error_type"],
@@ -268,28 +289,28 @@ async def search_stream(
                     batch=error["batch"],
                 ))
                 return
-            elif result["type"] == "progress":
+            elif result["type"] == "progress" and result["progress"] is not None:
                 progress = result["progress"]
                 yield sse_event(ScoringProgressEvent(
                     processed=progress["processed"],
                     total=progress["total"],
                     message=f"Оценено {progress['processed']} из {progress['total']} отелей",
                 ))
-            elif result["type"] == "done":
+            elif result["type"] == "done" and result["results"] is not None:
                 scoring_results = result["results"]
 
         scoring_map = {s["hotel_id"]: s for s in scoring_results}
-        for hotel in top_hotels:
-            score_data = scoring_map.get(hotel["id"])
+        for htl in top_hotels:
+            score_data = scoring_map.get(htl["id"])
             if score_data:
-                hotel["scoring"] = score_data
+                htl["scoring"] = score_data
 
-        top_hotels.sort(key=lambda h: h.get("scoring", {}).get("score", 0), reverse=True)
+        top_hotels.sort(key=lambda x: x.get("scoring", {}).get("score", 0), reverse=True)
 
-        for hotel in top_hotels:
-            hotel["ostrovok_url"] = get_ostrovok_url(
-                hotel_id=hotel["id"],
-                hid=hotel["hid"],
+        for htl in top_hotels:
+            htl["ostrovok_url"] = get_ostrovok_url(
+                hotel_id=htl["id"],
+                hid=htl["hid"],
                 city=request.city,
                 country_code=request.country_code or "",
             )

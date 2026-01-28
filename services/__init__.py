@@ -19,17 +19,17 @@ from .reviews import (
 from .scoring import score_hotels
 
 __all__ = [
+    "HotelReviewsFiltered",
     "calculate_prescore",
     "fetch_hotel_content",
     "fetch_hotel_content_async",
+    "fetch_reviews",
+    "fetch_reviews_async",
     "filter_hotels_by_price",
+    "filter_reviews",
     "get_hotel_price",
     "get_hotel_price_per_night",
     "get_ostrovok_url",
     "presort_hotels",
-    "HotelReviewsFiltered",
-    "fetch_reviews",
-    "fetch_reviews_async",
-    "filter_reviews",
     "score_hotels",
 ]

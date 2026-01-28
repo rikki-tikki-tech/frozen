@@ -14,11 +14,11 @@ from .types import (
 )
 
 __all__ = [
-    "ETGClient",
     "AsyncETGClient",
-    "ETGClientError",
-    "ETGAuthError",
     "ETGAPIError",
+    "ETGAuthError",
+    "ETGClient",
+    "ETGClientError",
     "ETGNetworkError",
     "GuestRoom",
     "Hotel",

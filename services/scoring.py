@@ -2,7 +2,8 @@
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, TypedDict
+from collections.abc import AsyncIterator
+from typing import Any, TypedDict
 
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent
@@ -63,7 +64,7 @@ class ScoringResult(TypedDict):
     progress: ScoringProgress | None
     retry: ScoringRetry | None
     error: ScoringError | None
-    results: list[dict] | None
+    results: list[dict[str, Any]] | None
 
 
 SCORING_PROMPT = """Score hotels for user preferences. Return JSON that matches the schema.
@@ -76,7 +77,7 @@ Rules:
 - Score 0-100.
 - Return ALL hotels sorted by score desc.
 - top_reasons: 2-3 short phrases (<=10 words each).
-- score_penalties: up to 5 short facts, ordered by severity, explaining why the score is lower; empty list if none.
+- score_penalties: up to 5 facts explaining why score is lower; empty if none.
 - Do not include markdown or extra text.
 """
 
@@ -102,27 +103,31 @@ def estimate_tokens(text: str) -> int:
     return len(text) // CHARS_PER_TOKEN
 
 
-def _create_agent(model_name: str | None = None) -> Agent:
+def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]:
     """Create scoring agent with specified model (Gemini or Claude)."""
     if model_name is None:
         model_name = _get_default_model()
 
     if _is_anthropic_model(model_name):
-        settings = AnthropicModelSettings(
+        anthropic_settings = AnthropicModelSettings(
             temperature=0.2,
             timeout=300.0,
         )
-        model = AnthropicModel(model_name)
-        return Agent(model, output_type=ScoringResponse, model_settings=settings)
+        anthropic_model = AnthropicModel(model_name)
+        return Agent(
+            anthropic_model, output_type=ScoringResponse, model_settings=anthropic_settings
+        )
 
     from google.genai.types import ThinkingLevel
 
-    settings = GoogleModelSettings(
+    google_settings = GoogleModelSettings(
         temperature=0.2,
         google_thinking_config={"thinking_level": ThinkingLevel.LOW},
     )
-    model = GoogleModel(model_name)
-    return Agent(model, output_type=ScoringResponse, model_settings=settings)
+    google_model = GoogleModel(model_name)
+    return Agent(
+        google_model, output_type=ScoringResponse, model_settings=google_settings
+    )
 
 
 def prepare_hotel_for_llm(
@@ -132,7 +137,7 @@ def prepare_hotel_for_llm(
     max_price: float | None = None,
 ) -> dict[str, Any]:
     """Prepare hotel data for LLM scoring with key information."""
-    rates_info = []
+    rates_info: list[dict[str, Any]] = []
     for rate in hotel.get("rates", []):
         pt = rate.get("payment_options", {}).get("payment_types", [])
         price_str = pt[0].get("show_amount") if pt else None
@@ -200,7 +205,7 @@ def prepare_hotel_for_llm(
     }
 
 
-def _build_prompt(hotels_data: list[dict], user_preferences: str) -> str:
+def _build_prompt(hotels_data: list[dict[str, Any]], user_preferences: str) -> str:
     """Build scoring prompt for a batch of hotels."""
     return SCORING_PROMPT.format(
         user_preferences=user_preferences,
@@ -209,7 +214,7 @@ def _build_prompt(hotels_data: list[dict], user_preferences: str) -> str:
 
 
 async def score_hotels(
-    hotels: list[dict],
+    hotels: list[dict[str, Any]],
     user_preferences: str,
     currency: str = "EUR",
     min_price: float | None = None,
@@ -254,7 +259,7 @@ async def score_hotels(
         "results": None,
     }
 
-    all_results = []
+    all_results: list[dict[str, Any]] = []
     processed = 0
 
     for batch_num, i in enumerate(range(0, total, batch_size), 1):
@@ -279,14 +284,12 @@ async def score_hotels(
         }
 
         result = None
-        last_error = None
         for attempt in range(retries):
             try:
                 response = await agent.run(prompt)
                 result = response.output
                 break
             except (ValidationError, ValueError) as e:
-                last_error = e
                 if attempt < retries - 1:
                     yield {
                         "type": "retry",
@@ -320,7 +323,7 @@ async def score_hotels(
                 }
                 return
 
-        if result:
+        if result is not None:
             all_results.extend([h.model_dump() for h in result.results])
 
         processed += len(batch)

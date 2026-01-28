@@ -8,6 +8,7 @@ API Documentation: https://docs.emergingtravel.com/docs/
 """
 
 import time
+from typing import Any, Self, cast
 
 import httpx
 
@@ -23,13 +24,13 @@ from .types import (
 BASE_URL = "https://api.worldota.net"
 
 
-def _normalize_guests(guest_rooms: list[GuestRoom]) -> list[GuestRoom]:
+def _normalize_guests(guest_rooms: list[GuestRoom]) -> list[dict[str, Any]]:
     """Normalize guest room data (handles both dict-style and int children)."""
-    normalized: list[GuestRoom] = []
+    normalized: list[dict[str, Any]] = []
     for room in guest_rooms:
-        room_dict = dict(room)
+        room_dict: dict[str, Any] = dict(room)
         children = room_dict.get("children")
-        if children is not None:
+        if children is not None and isinstance(children, list):
             normalized_children: list[int] = []
             for child in children:
                 if isinstance(child, dict):
@@ -39,7 +40,7 @@ def _normalize_guests(guest_rooms: list[GuestRoom]) -> list[GuestRoom]:
                 else:
                     normalized_children.append(int(child))
             room_dict["children"] = normalized_children
-        normalized.append(room_dict)  # type: ignore[list-item]
+        normalized.append(room_dict)
     return normalized
 
 
@@ -66,7 +67,7 @@ class ETGClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "ETGClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -77,22 +78,22 @@ class ETGClient:
     ) -> None:
         self.close()
 
-    def _request(self, endpoint: str, payload: dict[str, object]) -> dict:
+    def _request(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         start_time = time.perf_counter()
         try:
             response = self._client.post(endpoint, json=payload)
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             elapsed = time.perf_counter() - start_time
             print(f"  [ETG] {endpoint} - TIMEOUT after {elapsed:.2f}s")
-            raise ETGNetworkError("Request timed out")
+            raise ETGNetworkError("Request timed out") from e
         except httpx.ConnectError as e:
             elapsed = time.perf_counter() - start_time
             print(f"  [ETG] {endpoint} - CONNECTION ERROR after {elapsed:.2f}s")
-            raise ETGNetworkError(f"Connection error: {e}")
+            raise ETGNetworkError(f"Connection error: {e}") from e
         except httpx.RequestError as e:
             elapsed = time.perf_counter() - start_time
             print(f"  [ETG] {endpoint} - REQUEST ERROR after {elapsed:.2f}s")
-            raise ETGNetworkError(f"Request failed: {e}")
+            raise ETGNetworkError(f"Request failed: {e}") from e
 
         elapsed = time.perf_counter() - start_time
         print(f"  [ETG] {endpoint} - {response.status_code} in {elapsed:.2f}s")
@@ -107,9 +108,9 @@ class ETGClient:
             )
 
         try:
-            data = response.json()
+            data: dict[str, Any] = response.json()
         except ValueError as e:
-            raise ETGAPIError(f"Invalid JSON response: {e}")
+            raise ETGAPIError(f"Invalid JSON response: {e}") from e
 
         if data.get("status") != "ok" and data.get("error"):
             error_info = data.get("error", {})
@@ -119,7 +120,7 @@ class ETGClient:
 
     def suggest_region(self, query: str, language: str = "en") -> list[Region]:
         """Search for regions (cities, countries, etc.) by name."""
-        payload: dict[str, str] = {
+        payload: dict[str, Any] = {
             "query": query,
             "language": language,
         }
@@ -132,7 +133,7 @@ class ETGClient:
         regions = data.get("regions")
         if regions is None or not isinstance(regions, list):
             return []
-        return regions  # type: ignore[return-value]
+        return cast("list[Region]", regions)
 
     def search_hotels_by_region(
         self,
@@ -146,7 +147,7 @@ class ETGClient:
         hotels_limit: int | None = None,
     ) -> SearchResults:
         """Search for available hotels in a region."""
-        payload: dict[str, object] = {
+        payload: dict[str, Any] = {
             "region_id": region_id,
             "checkin": checkin,
             "checkout": checkout,
@@ -168,7 +169,7 @@ class ETGClient:
         data = response.get("data")
         if data is None or not isinstance(data, dict):
             return {"hotels": [], "total_hotels": 0}
-        return data  # type: ignore[return-value]
+        return cast("SearchResults", data)
 
     def get_hotel_reviews(
         self,
@@ -176,7 +177,7 @@ class ETGClient:
         language: str = "en",
     ) -> list[HotelReviews]:
         """Get reviews for hotels by their numeric IDs."""
-        payload: dict[str, object] = {
+        payload: dict[str, Any] = {
             "hids": hids,
             "language": language,
         }
@@ -186,7 +187,7 @@ class ETGClient:
         data = response.get("data")
         if data is None or not isinstance(data, list):
             return []
-        return data  # type: ignore[return-value]
+        return cast("list[HotelReviews]", data)
 
     def get_hotel_content(
         self,
@@ -194,7 +195,7 @@ class ETGClient:
         language: str = "en",
     ) -> list[HotelContent]:
         """Get content (details) for hotels by their numeric IDs."""
-        payload: dict[str, object] = {
+        payload: dict[str, Any] = {
             "hids": hids,
             "language": language,
         }
@@ -204,7 +205,7 @@ class ETGClient:
         data = response.get("data")
         if data is None or not isinstance(data, list):
             return []
-        return data  # type: ignore[return-value]
+        return cast("list[HotelContent]", data)
 
 
 class AsyncETGClient:
@@ -230,7 +231,7 @@ class AsyncETGClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "AsyncETGClient":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(
@@ -242,23 +243,23 @@ class AsyncETGClient:
         await self.close()
 
     async def _request(
-        self, endpoint: str, payload: dict[str, object]
-    ) -> dict:
+        self, endpoint: str, payload: dict[str, Any],
+    ) -> dict[str, Any]:
         start_time = time.perf_counter()
         try:
             response = await self._client.post(endpoint, json=payload)
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             elapsed = time.perf_counter() - start_time
             print(f"  [ETG] {endpoint} - TIMEOUT after {elapsed:.2f}s")
-            raise ETGNetworkError("Request timed out")
+            raise ETGNetworkError("Request timed out") from e
         except httpx.ConnectError as e:
             elapsed = time.perf_counter() - start_time
             print(f"  [ETG] {endpoint} - CONNECTION ERROR after {elapsed:.2f}s")
-            raise ETGNetworkError(f"Connection error: {e}")
+            raise ETGNetworkError(f"Connection error: {e}") from e
         except httpx.RequestError as e:
             elapsed = time.perf_counter() - start_time
             print(f"  [ETG] {endpoint} - REQUEST ERROR after {elapsed:.2f}s")
-            raise ETGNetworkError(f"Request failed: {e}")
+            raise ETGNetworkError(f"Request failed: {e}") from e
 
         elapsed = time.perf_counter() - start_time
         print(f"  [ETG] {endpoint} - {response.status_code} in {elapsed:.2f}s")
@@ -273,9 +274,9 @@ class AsyncETGClient:
             )
 
         try:
-            data = response.json()
+            data: dict[str, Any] = response.json()
         except ValueError as e:
-            raise ETGAPIError(f"Invalid JSON response: {e}")
+            raise ETGAPIError(f"Invalid JSON response: {e}") from e
 
         if data.get("status") != "ok" and data.get("error"):
             error_info = data.get("error", {})
@@ -285,7 +286,7 @@ class AsyncETGClient:
 
     async def suggest_region(self, query: str, language: str = "en") -> list[Region]:
         """Search for regions by name."""
-        payload: dict[str, str] = {
+        payload: dict[str, Any] = {
             "query": query,
             "language": language,
         }
@@ -298,7 +299,7 @@ class AsyncETGClient:
         regions = data.get("regions")
         if regions is None or not isinstance(regions, list):
             return []
-        return regions  # type: ignore[return-value]
+        return cast("list[Region]", regions)
 
     async def search_hotels_by_region(
         self,
@@ -312,7 +313,7 @@ class AsyncETGClient:
         hotels_limit: int | None = None,
     ) -> SearchResults:
         """Search for available hotels in a region."""
-        payload: dict[str, object] = {
+        payload: dict[str, Any] = {
             "region_id": region_id,
             "checkin": checkin,
             "checkout": checkout,
@@ -334,7 +335,7 @@ class AsyncETGClient:
         data = response.get("data")
         if data is None or not isinstance(data, dict):
             return {"hotels": [], "total_hotels": 0}
-        return data  # type: ignore[return-value]
+        return cast("SearchResults", data)
 
     async def get_hotel_reviews(
         self,
@@ -342,7 +343,7 @@ class AsyncETGClient:
         language: str = "en",
     ) -> list[HotelReviews]:
         """Get reviews for hotels by their numeric IDs."""
-        payload: dict[str, object] = {
+        payload: dict[str, Any] = {
             "hids": hids,
             "language": language,
         }
@@ -352,7 +353,7 @@ class AsyncETGClient:
         data = response.get("data")
         if data is None or not isinstance(data, list):
             return []
-        return data  # type: ignore[return-value]
+        return cast("list[HotelReviews]", data)
 
     async def get_hotel_content(
         self,
@@ -360,7 +361,7 @@ class AsyncETGClient:
         language: str = "en",
     ) -> list[HotelContent]:
         """Get content for hotels by their numeric IDs."""
-        payload: dict[str, object] = {
+        payload: dict[str, Any] = {
             "hids": hids,
             "language": language,
         }
@@ -370,4 +371,4 @@ class AsyncETGClient:
         data = response.get("data")
         if data is None or not isinstance(data, list):
             return []
-        return data  # type: ignore[return-value]
+        return cast("list[HotelContent]", data)

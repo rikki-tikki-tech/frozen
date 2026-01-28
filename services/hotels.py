@@ -1,6 +1,7 @@
 """Hotel data processing, filtering, and pre-scoring."""
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from etg import AsyncETGClient, ETGClient, Hotel, HotelContent
 
@@ -147,7 +148,9 @@ async def fetch_hotel_content_async(
     return content_map
 
 
-def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
+def calculate_prescore(
+    hotel: dict[str, Any], reviews_data: dict[str, Any] | None = None,
+) -> float:
     """
     Calculate quick pre-score for sorting before LLM.
 
@@ -158,12 +161,12 @@ def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
     """
     score = 0.0
 
-    stars = hotel.get("star_rating", 0)
+    stars: int = hotel.get("star_rating", 0)
     score += stars * 5
 
     if reviews_data:
-        total = reviews_data.get("total_reviews", 0)
-        positive = reviews_data.get("positive_count", 0)
+        total: int = reviews_data.get("total_reviews", 0)
+        positive: int = reviews_data.get("positive_count", 0)
 
         if total > 0:
             score += (positive / total) * 50
@@ -174,12 +177,12 @@ def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
 
 
 def presort_hotels(
-    hotels: list[dict],
-    reviews_map: dict[int, dict],
+    hotels: list[dict[str, Any]],
+    reviews_map: dict[int, dict[str, Any]],
     limit: int = 100,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Sort hotels by pre-score and return top N."""
-    scored = []
+    scored: list[dict[str, Any]] = []
     for hotel in hotels:
         hid = hotel.get("hid")
         reviews_data = reviews_map.get(hid) if hid else None
