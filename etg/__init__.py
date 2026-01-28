@@ -10,6 +10,7 @@ from .types import (
     HotelReviews,
     Region,
     Review,
+    SearchParams,
     SearchResults,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "HotelReviews",
     "Region",
     "Review",
+    "SearchParams",
     "SearchResults",
 ]

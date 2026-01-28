@@ -22,6 +22,12 @@ DEFAULT_NEGATIVE_THRESHOLD = 5.0
 
 
 class HotelReviewsFiltered(TypedDict):
+    """Filtered hotel reviews with sentiment segmentation.
+
+    Contains reviews split into positive, neutral, and negative segments
+    based on rating thresholds.
+    """
+
     reviews: list[ReviewDict]
     total_reviews: int
     positive_count: int

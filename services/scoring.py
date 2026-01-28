@@ -5,13 +5,20 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, TypedDict
 
+import httpx
+from google.genai.types import ThinkingLevel
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
+from config import SCORING_MODEL
+
 
 class HotelScore(BaseModel):
+    """Individual hotel score from LLM evaluation."""
+
     hotel_id: str
     score: int
     top_reasons: list[str]
@@ -19,10 +26,14 @@ class HotelScore(BaseModel):
 
 
 class ScoringResponse(BaseModel):
+    """LLM response containing all hotel scores."""
+
     results: list[HotelScore]
 
 
 class ScoringProgress(TypedDict):
+    """Progress update during scoring process."""
+
     processed: int
     total: int
     batch: int
@@ -30,6 +41,8 @@ class ScoringProgress(TypedDict):
 
 
 class ScoringStart(TypedDict):
+    """Initial scoring metadata sent at start."""
+
     total_hotels: int
     total_batches: int
     batch_size: int
@@ -37,6 +50,8 @@ class ScoringStart(TypedDict):
 
 
 class ScoringBatchStart(TypedDict):
+    """Metadata sent at the start of each batch."""
+
     batch: int
     total_batches: int
     hotels_in_batch: int
@@ -45,6 +60,8 @@ class ScoringBatchStart(TypedDict):
 
 
 class ScoringRetry(TypedDict):
+    """Retry information when a batch fails."""
+
     batch: int
     attempt: int
     max_attempts: int
@@ -52,12 +69,19 @@ class ScoringRetry(TypedDict):
 
 
 class ScoringError(TypedDict):
+    """Error information when scoring fails."""
+
     message: str
     error_type: str
     batch: int | None
 
 
 class ScoringResult(TypedDict):
+    """Union result type for scoring events.
+
+    Contains one of: start, batch_start, progress, retry, error, or done events.
+    """
+
     type: str  # "start", "batch_start", "progress", "retry", "error", or "done"
     start: ScoringStart | None
     batch_start: ScoringBatchStart | None
@@ -65,6 +89,20 @@ class ScoringResult(TypedDict):
     retry: ScoringRetry | None
     error: ScoringError | None
     results: list[dict[str, Any]] | None
+
+
+class ScoringParams(TypedDict, total=False):
+    """Optional scoring parameters.
+
+    All fields are optional with sensible defaults.
+    """
+
+    currency: str
+    min_price: float
+    max_price: float
+    batch_size: int
+    model_name: str
+    retries: int
 
 
 SCORING_PROMPT = """Score hotels for user preferences. Return JSON that matches the schema.
@@ -86,11 +124,16 @@ DEFAULT_RETRIES = 3
 
 CHARS_PER_TOKEN = 3
 
+MAX_RATES_PER_HOTEL = 5
+MAX_REVIEWS_PER_HOTEL = 10
+MAX_AMENITIES_PER_HOTEL = 20
+REVIEW_TEXT_MAX_LENGTH = 150
+
 ANTHROPIC_MODELS = {"claude-haiku-4-5", "claude-sonnet-4", "claude-opus-4"}
 
 
 def _get_default_model() -> str:
-    from config import SCORING_MODEL
+    """Get the default scoring model from configuration."""
     return SCORING_MODEL
 
 
@@ -117,8 +160,6 @@ def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]
         return Agent(
             anthropic_model, output_type=ScoringResponse, model_settings=anthropic_settings
         )
-
-    from google.genai.types import ThinkingLevel
 
     google_settings = GoogleModelSettings(
         temperature=0.2,
@@ -152,7 +193,7 @@ def prepare_hotel_for_llm(
             except (ValueError, TypeError):
                 pass
 
-        if len(rates_info) >= 5:
+        if len(rates_info) >= MAX_RATES_PER_HOTEL:
             break
 
         meal_data = rate.get("meal_data", {})
@@ -175,20 +216,23 @@ def prepare_hotel_for_llm(
 
         rates_info.append(rate_info)
 
-    amenities = []
-    for g in hotel.get("amenity_groups", []):
-        for a in g.get("amenities", []):
-            amenities.append(a.get("name", "") if isinstance(a, dict) else str(a))
+    amenities = [
+        a.get("name", "") if isinstance(a, dict) else str(a)
+        for g in hotel.get("amenity_groups", [])
+        for a in g.get("amenities", [])
+    ]
 
-    reviews = []
     hr = hotel.get("reviews", {})
-    for r in (hr.get("reviews", []) if isinstance(hr, dict) else [])[:10]:
-        reviews.append({
+    raw_reviews = hr.get("reviews", []) if isinstance(hr, dict) else []
+    reviews = [
+        {
             "id": r.get("id"),
             "rating": r.get("rating"),
-            "plus": (r.get("review_plus") or "")[:150],
-            "minus": (r.get("review_minus") or "")[:150],
-        })
+            "plus": (r.get("review_plus") or "")[:REVIEW_TEXT_MAX_LENGTH],
+            "minus": (r.get("review_minus") or "")[:REVIEW_TEXT_MAX_LENGTH],
+        }
+        for r in raw_reviews[:MAX_REVIEWS_PER_HOTEL]
+    ]
 
     return {
         "hotel_id": hotel.get("id", ""),
@@ -200,7 +244,7 @@ def prepare_hotel_for_llm(
         "facts": hotel.get("facts", []),
         "serp_filters": hotel.get("serp_filters", []),
         "rates": rates_info,
-        "amenities": amenities[:20],
+        "amenities": amenities[:MAX_AMENITIES_PER_HOTEL],
         "reviews": reviews,
     }
 
@@ -216,18 +260,26 @@ def _build_prompt(hotels_data: list[dict[str, Any]], user_preferences: str) -> s
 async def score_hotels(
     hotels: list[dict[str, Any]],
     user_preferences: str,
-    currency: str = "EUR",
-    min_price: float | None = None,
-    max_price: float | None = None,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    model_name: str | None = None,
-    retries: int = DEFAULT_RETRIES,
+    params: ScoringParams | None = None,
 ) -> AsyncIterator[ScoringResult]:
-    """
-    Score hotels based on user preferences using LLM.
+    """Score hotels based on user preferences using LLM.
 
-    Yields ScoringResult events: start, batch_start, retry, progress, error, done.
+    Args:
+        hotels: List of hotel data to score.
+        user_preferences: User preferences for scoring.
+        params: Optional scoring parameters (currency, min_price, max_price, etc.).
+
+    Yields:
+        ScoringResult events: start, batch_start, retry, progress, error, done.
     """
+    params = params or {}
+    currency = params.get("currency", "EUR")
+    min_price = params.get("min_price")
+    max_price = params.get("max_price")
+    batch_size = params.get("batch_size", DEFAULT_BATCH_SIZE)
+    model_name = params.get("model_name")
+    retries = params.get("retries", DEFAULT_RETRIES)
+
     agent = _create_agent(model_name)
 
     hotels_for_llm = [
@@ -307,7 +359,7 @@ async def score_hotels(
                     }
                     await asyncio.sleep(1)
                     continue
-            except Exception as e:
+            except (httpx.HTTPError, UnexpectedModelBehavior, RuntimeError, OSError) as e:
                 yield {
                     "type": "error",
                     "start": None,

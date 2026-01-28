@@ -14,6 +14,18 @@ class GuestRoom(TypedDict):
     children: NotRequired[list[int]]  # Ages of children (0-17)
 
 
+class SearchParams(TypedDict, total=False):
+    """Optional search parameters for hotel search.
+
+    All fields are optional and will be passed to the API if provided.
+    """
+
+    guests: list[GuestRoom]
+    currency: str
+    language: str
+    hotels_limit: int
+
+
 # =============================================================================
 # Response Types — Search
 # =============================================================================

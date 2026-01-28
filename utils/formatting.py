@@ -1,3 +1,5 @@
+"""Date and guest formatting utilities for Russian UI."""
+
 from datetime import date
 
 from etg import GuestRoom
