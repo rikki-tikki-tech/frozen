@@ -15,4 +15,88 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic-ai>=1.42.0",
     "pandas-stubs~=2.3.3",
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
 ]
+
+# =============================================================================
+# Ruff Configuration (максимально строгие настройки)
+# =============================================================================
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+# Включаем ВСЕ правила, минимум исключений
+select = ["ALL"]
+ignore = [
+    # Несовместимые с ruff formatter (официально рекомендуется игнорировать)
+    "W191",    # indentation contains tabs
+    "E111",    # indentation is not a multiple of four
+    "E114",    # indentation is not a multiple of four (comment)
+    "E117",    # over-indented
+    "D206",    # docstring should be indented with spaces, not tabs
+    "D300",    # use triple double quotes
+    "Q000",    # single quotes found but double quotes preferred
+    "Q001",    # single quote multiline found but double quotes preferred
+    "Q002",    # single quote docstring found but double quotes preferred
+    "Q003",    # change outer quotes to avoid escaping inner quotes
+    "COM812",  # missing trailing comma (conflicts with formatter)
+    "COM819",  # trailing comma prohibited
+    "ISC001",  # single line implicit string concatenation
+    "ISC002",  # multi line implicit string concatenation
+
+    # Конфликтующие правила docstring (D203 vs D211, D212 vs D213)
+    "D203",    # 1 blank line required before class docstring (conflicts with D211)
+    "D212",    # Multi-line docstring summary should start at the first line
+
+    # Русский язык — кириллица в строках и комментариях
+    "RUF001",  # String contains ambiguous unicode character
+    "RUF002",  # Docstring contains ambiguous unicode character
+    "RUF003",  # Comment contains ambiguous unicode character
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports OK in __init__
+"etg_hotels.ipynb" = ["ALL"]  # notebook — не линтуем
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "config", "etg", "services", "utils"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# =============================================================================
+# Mypy Configuration (максимально строгие настройки)
+# =============================================================================
+[tool.mypy]
+python_version = "3.13"
+strict = true
+
+# Дополнительные строгие проверки поверх strict
+warn_unreachable = true
+warn_no_return = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+
+# Игнорируем отсутствие стабов для внешних библиотек
+[[tool.mypy.overrides]]
+module = [
+    "genkit.*",
+    "genkit_plugin_google_genai.*",
+    "google.genai.*",
+    "pydantic_ai.*",
+]
+ignore_missing_imports = true

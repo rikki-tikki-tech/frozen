@@ -66,6 +66,8 @@ class HotelSearchRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_checkout_after_checkin(self) -> "HotelSearchRequest":
+        """Validate that checkout date is after checkin date."""
         if self.checkout <= self.checkin:
-            raise ValueError("Дата выезда должна быть позже даты заезда")
+            msg = "Дата выезда должна быть позже даты заезда"
+            raise ValueError(msg)
         return self

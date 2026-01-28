@@ -10,15 +10,16 @@ from .types import (
     HotelReviews,
     Region,
     Review,
+    SearchParams,
     SearchResults,
 )
 
 __all__ = [
-    "ETGClient",
     "AsyncETGClient",
-    "ETGClientError",
-    "ETGAuthError",
     "ETGAPIError",
+    "ETGAuthError",
+    "ETGClient",
+    "ETGClientError",
     "ETGNetworkError",
     "GuestRoom",
     "Hotel",
@@ -27,5 +28,6 @@ __all__ = [
     "HotelReviews",
     "Region",
     "Review",
+    "SearchParams",
     "SearchResults",
 ]

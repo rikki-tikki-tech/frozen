@@ -1,3 +1,5 @@
+"""Utility functions for formatting and SSE events."""
+
 from .formatting import format_dates, format_guests
 from .sse import sse_event
 
