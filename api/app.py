@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from config import CORS_ORIGINS, ETG_API_KEY, ETG_KEY_ID, ETG_REQUEST_TIMEOUT
-from etg import AsyncETGClient, Region
+from etg import ETGClient, Region
 
 from .schemas import HotelSearchRequest, RegionItem, RegionSuggestResponse
 from .search import search_stream
@@ -25,7 +25,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    etg_client = AsyncETGClient(ETG_KEY_ID, ETG_API_KEY, timeout=ETG_REQUEST_TIMEOUT)
+    etg_client = ETGClient(ETG_KEY_ID, ETG_API_KEY, timeout=ETG_REQUEST_TIMEOUT)
 
     @app.get("/")
     async def root() -> dict[str, Any]:

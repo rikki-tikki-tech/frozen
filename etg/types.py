@@ -1,6 +1,32 @@
 """ETG API type definitions (request and response types)."""
 
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
+
+# =============================================================================
+# Common Types
+# =============================================================================
+
+HotelKind = Literal[
+    "Hotel",
+    "Apart-hotel",
+    "Apartment",
+    "Hostel",
+    "BNB",
+    "Guesthouse",
+    "Mini-hotel",
+    "Boutique_and_Design",
+    "Resort",
+    "Sanatorium",
+    "Villas_and_Bungalows",
+    "Cottages_and_Houses",
+    "Castle",
+    "Farm",
+    "Camping",
+    "Glamping",
+    "Unspecified",
+]
+"""Hotel property type."""
+
 
 # =============================================================================
 # Request Types
@@ -12,18 +38,6 @@ class GuestRoom(TypedDict):
 
     adults: int
     children: NotRequired[list[int]]  # Ages of children (0-17)
-
-
-class SearchParams(TypedDict, total=False):
-    """Optional search parameters for hotel search.
-
-    All fields are optional and will be passed to the API if provided.
-    """
-
-    guests: list[GuestRoom]
-    currency: str
-    language: str
-    hotels_limit: int
 
 
 # =============================================================================
@@ -117,6 +131,24 @@ class RoomExtension(TypedDict):
     floor: NotRequired[int]
 
 
+class NoShowPenalty(TypedDict):
+    """No-show penalty information."""
+
+    amount: str
+    currency_code: str
+    from_time: str
+
+
+class RoomDataTrans(TypedDict):
+    """Translated room data."""
+
+    bathroom: str | None
+    bedding_type: str | None
+    main_name: str
+    main_room_type: str
+    misc_room_type: str | None
+
+
 class HotelRate(TypedDict):
     """Hotel rate/offer information."""
 
@@ -128,11 +160,16 @@ class HotelRate(TypedDict):
     payment_options: PaymentOptions
     rg_ext: dict[str, int]
     room_name: str
-    room_name_info: NotRequired[str | None]
+    room_name_info: str | None
+    room_data_trans: RoomDataTrans
     serp_filters: NotRequired[list[str]]
     amenities_data: NotRequired[list[str]]
     allotment: NotRequired[int]
     any_residency: NotRequired[bool]
+    deposit: NotRequired[str | None]
+    is_package: NotRequired[bool]
+    legal_info: NotRequired[str | None]
+    no_show: NotRequired[NoShowPenalty | None]
 
 
 class Hotel(TypedDict):
@@ -200,33 +237,19 @@ class HotelReviews(TypedDict):
 # =============================================================================
 
 
-class ImageInfo(TypedDict):
-    """Hotel image information."""
+class ImageExt(TypedDict):
+    """Extended image information with category."""
 
+    category_slug: str
     url: str
-    width: NotRequired[int]
-    height: NotRequired[int]
-
-
-class ImageGroup(TypedDict):
-    """Group of images by category."""
-
-    group_name: str
-    images: list[ImageInfo]
-
-
-class Amenity(TypedDict):
-    """Hotel amenity."""
-
-    name: str
-    free: NotRequired[bool]
 
 
 class AmenityGroup(TypedDict):
     """Group of amenities by category."""
 
     group_name: str
-    amenities: list[Amenity]
+    amenities: list[str]
+    non_free_amenities: list[str] | None
 
 
 class DescriptionParagraph(TypedDict):
@@ -236,11 +259,12 @@ class DescriptionParagraph(TypedDict):
     paragraphs: list[str]
 
 
-class RoomAmenity(TypedDict):
-    """Room amenity."""
+class RoomNameStruct(TypedDict):
+    """Room name structure."""
 
-    name: str
-    free: NotRequired[bool]
+    bathroom: str
+    bedding_type: str
+    main_name: str
 
 
 class RoomGroup(TypedDict):
@@ -248,9 +272,10 @@ class RoomGroup(TypedDict):
 
     room_group_id: int
     name: str
-    name_struct: NotRequired[dict[str, str]]
-    room_amenities: NotRequired[list[RoomAmenity]]
-    images: NotRequired[list[ImageInfo]]
+    name_struct: NotRequired[RoomNameStruct]
+    room_amenities: list[str] | None
+    images: list[str] | None
+    images_ext: list[ImageExt]
     rg_ext: NotRequired[dict[str, int]]
 
 
@@ -264,17 +289,158 @@ class RegionInfo(TypedDict):
     iata: NotRequired[str]
 
 
-class MetapolicyInfo(TypedDict):
-    """Policy information."""
+class CheckInCheckOutPolicy(TypedDict):
+    """Check-in/check-out policy."""
 
-    check_in: NotRequired[str]
-    check_out: NotRequired[str]
-    deposit: NotRequired[str]
-    pets: NotRequired[str]
-    parking: NotRequired[str]
-    shuttle: NotRequired[str]
-    children: NotRequired[str]
-    meal: NotRequired[str]
+    check_in_check_out_type: str
+    currency: str
+    inclusion: str
+    price: str
+
+
+class ExtraBedPolicy(TypedDict):
+    """Extra bed policy."""
+
+    amount: int
+    currency: str
+    inclusion: str
+    price: str
+    price_unit: str
+
+
+class ParkingPolicy(TypedDict):
+    """Parking policy."""
+
+    currency: str
+    inclusion: str
+    price: str
+    price_unit: str
+    territory_type: str
+
+
+class PetsPolicy(TypedDict):
+    """Pets policy."""
+
+    currency: str
+    inclusion: str
+    pets_type: str
+    price: str
+    price_unit: str
+
+
+class MealPolicy(TypedDict):
+    """Meal policy."""
+
+    currency: str
+    inclusion: str
+    meal_type: str
+    price: str
+
+
+class NoShowPolicy(TypedDict):
+    """No-show policy."""
+
+    availability: str
+    day_period: str
+    time: str
+
+
+class VisaPolicy(TypedDict):
+    """Visa policy."""
+
+    visa_support: str
+
+
+class AddFeePolicy(TypedDict):
+    """Additional fee policy."""
+
+    currency: str
+    fee_type: str
+    price: str
+    price_unit: str
+
+
+class MetapolicyStruct(TypedDict):
+    """Metapolicy structure."""
+
+    add_fee: list[AddFeePolicy]
+    check_in_check_out: list[CheckInCheckOutPolicy]
+    children: list[dict[str, str]]
+    children_meal: list[dict[str, str]]
+    cot: list[dict[str, str]]
+    deposit: list[dict[str, str]]
+    extra_bed: list[ExtraBedPolicy]
+    internet: list[dict[str, str]]
+    meal: list[MealPolicy]
+    no_show: NoShowPolicy
+    parking: list[ParkingPolicy]
+    pets: list[PetsPolicy]
+    shuttle: list[dict[str, str]]
+    visa: VisaPolicy
+
+
+class PolicyParagraph(TypedDict):
+    """Policy paragraph."""
+
+    title: str
+    paragraphs: list[str]
+
+
+class ElectricityFacts(TypedDict):
+    """Electricity facts."""
+
+    frequency: list[int]
+    sockets: list[str]
+    voltage: list[int]
+
+
+class RegisterFacts(TypedDict):
+    """Registration facts."""
+
+    address: str
+    email: str
+    fsa_kind: str
+    fsa_name: str
+    kind: str
+    link: str
+    name: str
+    phone: str
+    record: str
+    rooms: list[dict[str, str]]
+    status: str
+    status_end_date: str
+
+
+class HotelFacts(TypedDict):
+    """Hotel facts."""
+
+    electricity: ElectricityFacts
+    floors_number: int
+    kind: HotelKind
+    register: RegisterFacts
+    rooms_number: int
+    star_rating: int
+    type: str
+    year_built: int
+    year_renovated: int
+
+
+class KeysPickup(TypedDict):
+    """Keys pickup information."""
+
+    apartment_extra_information: str
+    apartment_office_address: str
+    email: str
+    is_contactless: bool
+    phone: str
+    type: str
+
+
+class StarCertificate(TypedDict):
+    """Star certificate information."""
+
+    certificate_id: str
+    valid_to: str
 
 
 class HotelContent(TypedDict):
@@ -287,17 +453,28 @@ class HotelContent(TypedDict):
     latitude: float
     longitude: float
     star_rating: int
-    kind: str
+    kind: HotelKind
+    deleted: NotRequired[bool]
+    is_closed: NotRequired[bool]
+    is_gender_specification_required: NotRequired[bool]
     phone: NotRequired[str]
     email: NotRequired[str]
+    postal_code: NotRequired[str]
+    hotel_chain: NotRequired[str]
     check_in_time: NotRequired[str]
     check_out_time: NotRequired[str]
-    description_struct: NotRequired[list[DescriptionParagraph]]
-    amenity_groups: NotRequired[list[AmenityGroup]]
-    images_ext: NotRequired[list[ImageGroup]]
-    room_groups: NotRequired[list[RoomGroup]]
-    region: NotRequired[RegionInfo]
-    metapolicy_struct: NotRequired[MetapolicyInfo]
-    payment_methods: NotRequired[list[str]]
     front_desk_time_start: NotRequired[str]
     front_desk_time_end: NotRequired[str]
+    description_struct: NotRequired[list[DescriptionParagraph]]
+    policy_struct: NotRequired[list[PolicyParagraph]]
+    amenity_groups: NotRequired[list[AmenityGroup]]
+    images_ext: NotRequired[list[ImageExt]]
+    room_groups: NotRequired[list[RoomGroup]]
+    region: NotRequired[RegionInfo]
+    metapolicy_struct: NotRequired[MetapolicyStruct]
+    metapolicy_extra_info: NotRequired[str]
+    payment_methods: NotRequired[list[str]]
+    facts: NotRequired[HotelFacts]
+    keys_pickup: NotRequired[KeysPickup]
+    star_certificate: NotRequired[StarCertificate]
+    serp_filters: NotRequired[list[str]]

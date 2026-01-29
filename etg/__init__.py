@@ -1,21 +1,20 @@
 """ETG (Emerging Travel Group) B2B API client package."""
 
-from .client import AsyncETGClient, ETGClient
+from .client import ETGClient
 from .exceptions import ETGAPIError, ETGAuthError, ETGClientError, ETGNetworkError
 from .types import (
     GuestRoom,
     Hotel,
     HotelContent,
+    HotelKind,
     HotelRate,
     HotelReviews,
     Region,
     Review,
-    SearchParams,
     SearchResults,
 )
 
 __all__ = [
-    "AsyncETGClient",
     "ETGAPIError",
     "ETGAuthError",
     "ETGClient",
@@ -24,10 +23,10 @@ __all__ = [
     "GuestRoom",
     "Hotel",
     "HotelContent",
+    "HotelKind",
     "HotelRate",
     "HotelReviews",
     "Region",
     "Review",
-    "SearchParams",
     "SearchResults",
 ]

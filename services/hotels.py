@@ -1,31 +1,105 @@
 """Hotel data processing, filtering, and pre-scoring."""
 
-from collections.abc import Awaitable, Callable
-from typing import Any
+from __future__ import annotations
 
-from etg import AsyncETGClient, ETGClient, Hotel, HotelContent, HotelRate
+import random
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-# Callback type: (batch_num, total_batches, hotels_loaded, total_hotels) -> None
-ContentProgressCallback = Callable[[int, int, int, int], Awaitable[None]]
+from etg import ETGClient, GuestRoom, Hotel, HotelContent, HotelKind, HotelRate
+
+if TYPE_CHECKING:
+    from .reviews import HotelReviewsFiltered
+    from .scoring import HotelScoreDict
 
 CONTENT_BATCH_SIZE = 100
 
-# Country code to Ostrovok URL path mapping
-COUNTRY_URL_MAP = {
-    "DE": "germany", "RU": "russia", "FR": "france", "IT": "italy", "ES": "spain",
-    "GB": "united_kingdom", "US": "usa", "CN": "china", "JP": "japan", "TH": "thailand",
-    "AE": "uae", "TR": "turkey", "GR": "greece", "AT": "austria", "CH": "switzerland",
-    "NL": "netherlands", "BE": "belgium", "PT": "portugal", "CZ": "czech_republic",
-    "PL": "poland", "HU": "hungary", "SE": "sweden", "NO": "norway", "DK": "denmark",
-    "FI": "finland", "IE": "ireland", "AU": "australia", "NZ": "new_zealand",
+# Hotel kind priority tiers (1 = most premium)
+HOTEL_KIND_TIERS: dict[HotelKind, int] = {
+    # Tier 1: Premium
+    "Castle": 1,
+    "Resort": 1,
+    "Boutique_and_Design": 1,
+    "Villas_and_Bungalows": 1,
+    "Hotel": 1,
+    # Tier 2: Mid-tier
+    "Apart-hotel": 2,
+    "Sanatorium": 2,
+    "Mini-hotel": 2,
+    "Apartment": 2,
+    "Guesthouse": 2,
+    # Tier 3: Budget/Alternative
+    "BNB": 3,
+    "Glamping": 3,
+    "Cottages_and_Houses": 3,
+    "Farm": 3,
+    # Tier 4: Low priority
+    "Hostel": 4,
+    "Camping": 4,
+    "Unspecified": 4,
 }
+DEFAULT_KIND_TIER = 4
 
 
-def get_ostrovok_url(hotel_id: str, hid: int, city: str, country_code: str) -> str:
-    """Generate Ostrovok hotel URL."""
-    country = COUNTRY_URL_MAP.get(country_code, country_code.lower())
-    city_slug = city.lower().replace(" ", "_")
-    return f"https://ostrovok.ru/hotel/{country}/{city_slug}/mid{hid}/{hotel_id}/"
+class HotelFull(HotelContent):
+    """Combined hotel data from search, content, and reviews.
+
+    This type extends HotelContent with:
+    - rates: from Hotel search result
+    - reviews: filtered reviews with sentiment segmentation
+    """
+
+    rates: list[HotelRate]
+    reviews: HotelReviewsFiltered
+
+
+class HotelScored(HotelFull):
+    """Hotel with LLM scoring data.
+
+    This type extends HotelFull with scoring fields from LLM evaluation.
+    Used as the final output type after scoring is complete.
+    """
+
+    score: int
+    top_reasons: list[str]
+    score_penalties: list[str]
+
+
+def combine_hotels_data(
+    hotels: list[Hotel],
+    content_map: dict[int, HotelContent],
+    reviews_map: dict[int, HotelReviewsFiltered],
+) -> list[HotelFull]:
+    """Combine hotel search results with content and reviews.
+
+    Args:
+        hotels: List of hotels from search.
+        content_map: Map of hid to hotel content.
+        reviews_map: Map of hid to filtered reviews.
+
+    Returns:
+        List of combined hotel data.
+    """
+    empty_reviews: HotelReviewsFiltered = {
+        "reviews": [],
+        "total_reviews": 0,
+        "filtered_by_age": 0,
+        "positive_count": 0,
+        "neutral_count": 0,
+        "negative_count": 0,
+    }
+
+    combined: list[HotelFull] = []
+    for hotel in hotels:
+        hid = hotel["hid"]
+        content = content_map.get(hid)
+        reviews = reviews_map.get(hid, empty_reviews)
+
+        hotel_data: dict[str, Any] = {**hotel, "reviews": reviews}
+        if content:
+            hotel_data.update(content)
+        combined.append(cast("HotelFull", hotel_data))
+
+    return combined
 
 
 def get_hotel_nights(hotel: Hotel) -> int:
@@ -140,65 +214,168 @@ def filter_hotels_by_price(
     return filtered
 
 
-def fetch_hotel_content(
+MAX_HOTELS_FOR_ANALYSIS = 500
+
+
+class SearchHotelsResult(TypedDict):
+    """Result of search_hotels function."""
+
+    hotels: list[Hotel]
+    total_available: int
+    total_after_filter: int
+
+
+class SampleHotelsResult(TypedDict):
+    """Result of sample_hotels function."""
+
+    hotels: list[Hotel]
+    sampled: int | None
+
+
+def sample_hotels(
+    hotels: list[Hotel],
+    max_count: int = MAX_HOTELS_FOR_ANALYSIS,
+) -> SampleHotelsResult:
+    """Sample hotels if there are too many.
+
+    Args:
+        hotels: List of hotels to sample.
+        max_count: Maximum number of hotels to keep.
+
+    Returns:
+        SampleHotelsResult with sampled hotels and count.
+    """
+    if len(hotels) <= max_count:
+        return {"hotels": hotels, "sampled": None}
+
+    return {
+        "hotels": random.sample(hotels, max_count),
+        "sampled": max_count,
+    }
+
+
+async def search_hotels(  # noqa: PLR0913
+    client: ETGClient,
+    region_id: int,
+    checkin: str,
+    checkout: str,
+    residency: str,
+    guests: list[GuestRoom],
+    currency: str | None = None,
+    language: str | None = None,
+    hotels_limit: int | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> SearchHotelsResult:
+    """Search hotels with price filtering.
+
+    Args:
+        client: ETG API client.
+        region_id: Region identifier.
+        checkin: Check-in date (YYYY-MM-DD).
+        checkout: Check-out date (YYYY-MM-DD).
+        residency: Guest residency country code.
+        guests: List of room configurations.
+        currency: Price currency code.
+        language: Response language code.
+        hotels_limit: Maximum hotels from API.
+        min_price: Minimum price per night filter.
+        max_price: Maximum price per night filter.
+
+    Returns:
+        SearchHotelsResult with hotels and statistics.
+    """
+    results = await client.search_hotels_by_region(
+        region_id=region_id,
+        checkin=checkin,
+        checkout=checkout,
+        residency=residency,
+        guests=guests,
+        currency=currency,
+        language=language,
+        hotels_limit=hotels_limit,
+    )
+
+    hotels: list[Hotel] = results.get("hotels", [])
+    total_available = results.get("total_hotels", len(hotels))
+
+    hotels = filter_hotels_by_price(hotels, min_price, max_price)
+    total_after_filter = len(hotels)
+
+    return {
+        "hotels": hotels,
+        "total_available": total_available,
+        "total_after_filter": total_after_filter,
+    }
+
+
+class BatchGetContentResult(TypedDict):
+    """Result of batch_get_content function."""
+
+    content: dict[int, HotelContent]
+    total_requested: int
+    total_loaded: int
+    total_batches: int
+
+
+async def batch_get_content(
     client: ETGClient,
     hids: list[int],
     language: str,
-) -> dict[int, HotelContent]:
-    """Fetch content for hotels in batches."""
-    content_map: dict[int, HotelContent] = {}
+) -> BatchGetContentResult:
+    """Fetch hotel content in batches.
 
-    for i in range(0, len(hids), CONTENT_BATCH_SIZE):
-        batch = hids[i : i + CONTENT_BATCH_SIZE]
-        content = client.get_hotel_content(hids=batch, language=language)
-        for hotel in content:
-            content_map[hotel["hid"]] = hotel
+    Args:
+        client: ETG API client.
+        hids: List of hotel IDs to fetch content for.
+        language: Response language code.
 
-    return content_map
-
-
-async def fetch_hotel_content_async(
-    client: AsyncETGClient,
-    hids: list[int],
-    language: str,
-    on_progress: ContentProgressCallback | None = None,
-) -> dict[int, HotelContent]:
-    """Fetch content for hotels in batches (async)."""
+    Returns:
+        BatchGetContentResult with content map and statistics.
+    """
     content_map: dict[int, HotelContent] = {}
     total = len(hids)
     total_batches = (total + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
 
-    for batch_num, i in enumerate(range(0, total, CONTENT_BATCH_SIZE), 1):
+    for i in range(0, total, CONTENT_BATCH_SIZE):
         batch = hids[i : i + CONTENT_BATCH_SIZE]
         content = await client.get_hotel_content(hids=batch, language=language)
         for hotel in content:
             content_map[hotel["hid"]] = hotel
 
-        if on_progress:
-            await on_progress(batch_num, total_batches, len(content_map), total)
-
-    return content_map
+    return {
+        "content": content_map,
+        "total_requested": total,
+        "total_loaded": len(content_map),
+        "total_batches": total_batches,
+    }
 
 
 def calculate_prescore(
-    hotel: dict[str, Any], reviews_data: dict[str, Any] | None = None,
+    hotel: HotelFull, reviews_data: HotelReviewsFiltered | None = None,
 ) -> float:
-    """
-    Calculate quick pre-score for sorting before LLM.
+    """Calculate quick pre-score for sorting before LLM.
 
     Score components (0-100):
     - Stars: 0-25 points (star_rating * 5)
     - Reviews ratio: 0-50 points (positive / total * 50)
     - Reviews count: 0-25 points (min(total, 25))
+
+    Args:
+        hotel: Combined hotel data.
+        reviews_data: Filtered reviews data.
+
+    Returns:
+        Pre-score value (0-100).
     """
     score = 0.0
 
-    stars: int = hotel.get("star_rating", 0)
+    stars = hotel.get("star_rating", 0)
     score += stars * 5
 
     if reviews_data:
-        total: int = reviews_data.get("total_reviews", 0)
-        positive: int = reviews_data.get("positive_count", 0)
+        total = reviews_data.get("total_reviews", 0)
+        positive = reviews_data.get("positive_count", 0)
 
         if total > 0:
             score += (positive / total) * 50
@@ -208,20 +385,91 @@ def calculate_prescore(
     return score
 
 
+def _get_hotel_tier(hotel: HotelFull) -> int:
+    """Get priority tier for a hotel based on its kind."""
+    kind = hotel.get("kind", "Unspecified")
+    return HOTEL_KIND_TIERS.get(kind, DEFAULT_KIND_TIER)
+
+
+class _ScoredHotel(TypedDict):
+    """Internal type for presort with scoring metadata."""
+
+    hotel: HotelFull
+    prescore: float
+    tier: int
+
+
 def presort_hotels(
-    hotels: list[dict[str, Any]],
-    reviews_map: dict[int, dict[str, Any]],
+    hotels: list[HotelFull],
+    reviews_map: dict[int, HotelReviewsFiltered],
     limit: int = 100,
-) -> list[dict[str, Any]]:
-    """Sort hotels by pre-score and return top N."""
-    scored: list[dict[str, Any]] = []
-    for hotel in hotels:
-        hid = hotel.get("hid")
+) -> list[HotelFull]:
+    """Sort hotels by kind tier and pre-score, return top N.
+
+    Hotels are grouped into 4 tiers by property type (premium first).
+    Within each tier, hotels are sorted by prescore. If a higher tier
+    has enough hotels to fill the limit, lower tiers are not included.
+    """
+    # Calculate prescore and tier for each hotel
+    scored: list[_ScoredHotel] = []
+    for htl in hotels:
+        hid = htl.get("hid")
         reviews_data = reviews_map.get(hid) if hid else None
-        prescore = calculate_prescore(hotel, reviews_data)
-        hotel["prescore"] = prescore
-        scored.append(hotel)
+        prescore = calculate_prescore(htl, reviews_data)
+        tier = _get_hotel_tier(htl)
+        scored.append({"hotel": htl, "prescore": prescore, "tier": tier})
 
-    scored.sort(key=lambda h: h.get("prescore", 0), reverse=True)
+    # Group by tier
+    tiers: dict[int, list[_ScoredHotel]] = {1: [], 2: [], 3: [], 4: []}
+    for item in scored:
+        tiers[item["tier"]].append(item)
 
-    return scored[:limit]
+    # Sort each tier by prescore
+    for tier_hotels in tiers.values():
+        tier_hotels.sort(key=lambda h: h["prescore"], reverse=True)
+
+    # Fill result from tiers in priority order
+    result: list[HotelFull] = []
+    for tier_num in (1, 2, 3, 4):
+        if len(result) >= limit:
+            break
+        remaining = limit - len(result)
+        result.extend(item["hotel"] for item in tiers[tier_num][:remaining])
+
+    return result
+
+
+def finalize_scored_hotels(
+    hotels: list[HotelFull],
+    scoring_results: list[HotelScoreDict],
+) -> list[HotelScored]:
+    """Merge hotel data with scoring results in score order.
+
+    Returns hotels in the order from scoring_results (sorted by score desc),
+    with hotel data merged from hotels list.
+
+    Args:
+        hotels: List of hotel data with content and reviews.
+        scoring_results: List of LLM scoring results sorted by score.
+
+    Returns:
+        List of scored hotels in score order.
+    """
+    hotels_map: dict[str, HotelFull] = {h["id"]: h for h in hotels}
+
+    result: list[HotelScored] = []
+    for score_data in scoring_results:
+        hotel_id = score_data["hotel_id"]
+        hotel = hotels_map.get(hotel_id)
+        if hotel is None:
+            continue
+
+        scored_hotel: dict[str, Any] = {
+            **hotel,
+            "score": score_data["score"],
+            "top_reasons": score_data["top_reasons"],
+            "score_penalties": score_data["score_penalties"],
+        }
+        result.append(cast("HotelScored", scored_hotel))
+
+    return result

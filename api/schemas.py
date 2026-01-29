@@ -28,7 +28,6 @@ class HotelSearchRequest(BaseModel):
     """Запрос на поиск отелей."""
 
     region_id: int = Field(gt=0, description="ID региона поиска")
-    city: str = Field(min_length=1, description="Название города")
     checkin: date = Field(description="Дата заезда")
     checkout: date = Field(description="Дата выезда")
     guests: list[GuestRoom] = Field(min_length=1, description="Количество гостей")
@@ -57,11 +56,6 @@ class HotelSearchRequest(BaseModel):
     )
     user_preferences: str | None = Field(
         default=None, description="Предпочтения пользователя для AI-скоринга"
-    )
-    country_code: str | None = Field(
-        default=None,
-        pattern=r"^[A-Z]{2}$",
-        description="Код страны (ISO 3166-1 alpha-2) для ссылок на Островок",
     )
 
     @model_validator(mode="after")

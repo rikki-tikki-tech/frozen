@@ -1,189 +1,169 @@
 """SSE Event types for hotel search streaming."""
 
-from typing import Any, Literal
+from datetime import date
+from enum import Enum
 
 from pydantic import BaseModel
 
-# =============================================================================
-# Phase 1: Search
-# =============================================================================
+from etg import GuestRoom
+from services import HotelScored
 
 
-class SearchStartEvent(BaseModel):
-    """Search pipeline started — shows what we're looking for."""
+class EventType(str, Enum):
+    """Event types for SSE streaming."""
 
-    type: Literal["search_start"] = "search_start"
-    phase: Literal["search"] = "search"
-    message: str
+    # Phase 1: Search
+    HOTEL_SEARCH_START = "hotel_search_start"
+    HOTEL_SEARCH_DONE = "hotel_search_done"
+
+    # Phase 2: Content
+    BATCH_GET_CONTENT_START = "batch_get_content_start"
+    BATCH_GET_CONTENT_DONE = "batch_get_content_done"
+
+    # Phase 3: Reviews
+    BATCH_GET_REVIEWS_START = "batch_get_reviews_start"
+    BATCH_GET_REVIEWS_DONE = "batch_get_reviews_done"
+
+    # Phase 4: Presort
+    PRESORT_DONE = "presort_done"
+
+    # Phase 5: Scoring
+    SCORING_START = "scoring_start"
+    SCORING_BATCH_START = "scoring_batch_start"
+    SCORING_RETRY = "scoring_retry"
+    SCORING_PROGRESS = "scoring_progress"
+
+    # Terminal
+    ERROR = "error"
+    DONE = "done"
 
 
-class HotelsFoundEvent(BaseModel):
+class HotelSearchStartEvent(BaseModel):
+    """Hotel search started."""
+
+    type: EventType = EventType.HOTEL_SEARCH_START
+    region_id: int
+    checkin: date
+    checkout: date
+    guests: list[GuestRoom]
+    residency: str
+    currency: str | None = None
+    language: str | None = None
+    min_price_per_night: float | None = None
+    max_price_per_night: float | None = None
+    user_preferences: str | None = None
+
+
+class HotelSearchDoneEvent(BaseModel):
     """Hotels found after ETG search + filtering."""
 
-    type: Literal["hotels_found"] = "hotels_found"
-    phase: Literal["search"] = "search"
+    type: EventType = EventType.HOTEL_SEARCH_DONE
     total_available: int
     total_after_filter: int
-    sampled: int | None = None  # if random sampling was applied
-    message: str
+    sampled: int | None = None
 
 
-# =============================================================================
-# Phase 2: Content fetching
-# =============================================================================
+class BatchGetContentStartEvent(BaseModel):
+    """Content fetching started."""
 
-
-class ContentProgressEvent(BaseModel):
-    """Per-batch progress of hotel content fetching."""
-
-    type: Literal["content_progress"] = "content_progress"
-    phase: Literal["content"] = "content"
-    batch: int
-    total_batches: int
-    hotels_loaded: int
+    type: EventType = EventType.BATCH_GET_CONTENT_START
     total_hotels: int
-    message: str
+    total_batches: int
 
 
-class ContentDoneEvent(BaseModel):
+class BatchGetContentDoneEvent(BaseModel):
     """Content fetching completed."""
 
-    type: Literal["content_done"] = "content_done"
-    phase: Literal["content"] = "content"
+    type: EventType = EventType.BATCH_GET_CONTENT_DONE
     hotels_with_content: int
     total_hotels: int
-    message: str
 
 
-# =============================================================================
-# Phase 3: Reviews fetching
-# =============================================================================
+class BatchGetReviewsStartEvent(BaseModel):
+    """Reviews fetching started."""
 
-
-class ReviewsProgressEvent(BaseModel):
-    """Per-batch/language progress of reviews fetching."""
-
-    type: Literal["reviews_progress"] = "reviews_progress"
-    phase: Literal["reviews"] = "reviews"
-    language: str
-    batch: int
-    total_batches: int
-    hotels_loaded: int
+    type: EventType = EventType.BATCH_GET_REVIEWS_START
     total_hotels: int
-    message: str
+    total_batches: int
 
 
-class ReviewsSummaryEvent(BaseModel):
-    """Reviews fetched and filtered — summary statistics."""
+class BatchGetReviewsDoneEvent(BaseModel):
+    """Reviews fetching completed."""
 
-    type: Literal["reviews_summary"] = "reviews_summary"
-    phase: Literal["reviews"] = "reviews"
-    total_reviews_raw: int
-    total_reviews_filtered: int
+    type: EventType = EventType.BATCH_GET_REVIEWS_DONE
     hotels_with_reviews: int
     total_hotels: int
-    positive_count: int
-    neutral_count: int
-    negative_count: int
-    message: str
-
-
-# =============================================================================
-# Phase 4: Pre-scoring and selection
-# =============================================================================
 
 
 class PresortDoneEvent(BaseModel):
-    """Pre-sorting completed — top hotels selected for LLM."""
+    """Pre-sorting completed."""
 
-    type: Literal["presort_done"] = "presort_done"
-    phase: Literal["presort"] = "presort"
+    type: EventType = EventType.PRESORT_DONE
     input_hotels: int
     output_hotels: int
-    min_prescore: float
-    max_prescore: float
-    message: str
-
-
-# =============================================================================
-# Phase 5: LLM Scoring (kept from original, enhanced with phase)
-# =============================================================================
 
 
 class ScoringStartEvent(BaseModel):
-    """Scoring process started event."""
+    """Scoring started."""
 
-    type: Literal["scoring_start"] = "scoring_start"
-    phase: Literal["scoring"] = "scoring"
+    type: EventType = EventType.SCORING_START
     total_hotels: int
     total_batches: int
     batch_size: int
     estimated_tokens: int
-    message: str
 
 
 class ScoringBatchStartEvent(BaseModel):
-    """Scoring batch started event."""
+    """Scoring batch started."""
 
-    type: Literal["scoring_batch_start"] = "scoring_batch_start"
-    phase: Literal["scoring"] = "scoring"
+    type: EventType = EventType.SCORING_BATCH_START
     batch: int
     total_batches: int
     hotels_in_batch: int
     estimated_tokens: int
-    message: str
 
 
 class ScoringRetryEvent(BaseModel):
-    """Scoring batch retry event."""
+    """Scoring batch retry."""
 
-    type: Literal["scoring_retry"] = "scoring_retry"
-    phase: Literal["scoring"] = "scoring"
+    type: EventType = EventType.SCORING_RETRY
     batch: int
     attempt: int
     max_attempts: int
-    message: str
 
 
 class ScoringProgressEvent(BaseModel):
-    """Scoring progress event."""
+    """Scoring progress."""
 
-    type: Literal["scoring_progress"] = "scoring_progress"
-    phase: Literal["scoring"] = "scoring"
+    type: EventType = EventType.SCORING_PROGRESS
     processed: int
     total: int
-    message: str
-
-
-# =============================================================================
-# Terminal events
-# =============================================================================
 
 
 class ErrorEvent(BaseModel):
     """Error event."""
 
-    type: Literal["error"] = "error"
+    type: EventType = EventType.ERROR
     error_type: str
-    message: str
+    error_message: str
     batch: int | None = None
 
 
 class DoneEvent(BaseModel):
-    """Search completed event."""
+    """Search completed."""
 
-    type: Literal["done"] = "done"
+    type: EventType = EventType.DONE
     total_scored: int
-    hotels: list[dict[str, Any]]
+    hotels: list[HotelScored]
 
 
 SSEEvent = (
-    SearchStartEvent
-    | HotelsFoundEvent
-    | ContentProgressEvent
-    | ContentDoneEvent
-    | ReviewsProgressEvent
-    | ReviewsSummaryEvent
+    HotelSearchStartEvent
+    | HotelSearchDoneEvent
+    | BatchGetContentStartEvent
+    | BatchGetContentDoneEvent
+    | BatchGetReviewsStartEvent
+    | BatchGetReviewsDoneEvent
     | PresortDoneEvent
     | ScoringStartEvent
     | ScoringBatchStartEvent

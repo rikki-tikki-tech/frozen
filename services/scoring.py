@@ -1,9 +1,10 @@
 """LLM-based hotel scoring using Google Gemini or Anthropic Claude."""
 
+from __future__ import annotations
+
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import httpx
 from google.genai.types import ThinkingLevel
@@ -14,6 +15,20 @@ from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 from config import SCORING_MODEL
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from .hotels import HotelFull
+
+
+class HotelScoreDict(TypedDict):
+    """Individual hotel score as dict."""
+
+    hotel_id: str
+    score: int
+    top_reasons: list[str]
+    score_penalties: list[str]
 
 
 class HotelScore(BaseModel):
@@ -76,19 +91,22 @@ class ScoringError(TypedDict):
     batch: int | None
 
 
+ScoringEventType = Literal["start", "batch_start", "progress", "retry", "error", "done"]
+
+
 class ScoringResult(TypedDict):
     """Union result type for scoring events.
 
     Contains one of: start, batch_start, progress, retry, error, or done events.
     """
 
-    type: str  # "start", "batch_start", "progress", "retry", "error", or "done"
+    type: ScoringEventType
     start: ScoringStart | None
     batch_start: ScoringBatchStart | None
     progress: ScoringProgress | None
     retry: ScoringRetry | None
     error: ScoringError | None
-    results: list[dict[str, Any]] | None
+    results: list[HotelScoreDict] | None
 
 
 class ScoringParams(TypedDict, total=False):
@@ -97,26 +115,52 @@ class ScoringParams(TypedDict, total=False):
     All fields are optional with sensible defaults.
     """
 
-    currency: str
-    min_price: float
-    max_price: float
     batch_size: int
     model_name: str
     retries: int
 
 
-SCORING_PROMPT = """Score hotels for user preferences. Return JSON that matches the schema.
+SCORING_PROMPT = """You are a hotel recommendation expert. Score each hotel based on how well it matches the user's preferences.
 
-User: {user_preferences}
+## User Preferences
+{user_preferences}
 
-Hotels: {hotels_json}
+## Hotels to Score
+{hotels_json}
 
-Rules:
-- Score 0-100.
-- Return ALL hotels sorted by score desc.
-- top_reasons: 2-3 short phrases (<=10 words each).
-- score_penalties: up to 5 facts explaining why score is lower; empty if none.
-- Do not include markdown or extra text.
+## Scoring Guidelines
+
+**Score Range (0-100):**
+- 90-100: Excellent match — meets all key preferences, no significant drawbacks
+- 70-89: Good match — meets most preferences, minor compromises
+- 50-69: Acceptable — meets some preferences, notable gaps
+- 30-49: Poor match — significant misalignment with preferences
+- 0-29: Very poor — fails to meet most preferences
+
+**Critical Rule — Explicit Preference Violations:**
+If the user explicitly stated a preference and the hotel does NOT meet it, apply a HEAVY penalty (-15 to -30 points per violation).
+- User said "с бассейном" → hotel has no pool → severe penalty
+- User said "в центре" → hotel is far from center → severe penalty
+
+Missing features that user did NOT mention = minor penalty (-5 to -10).
+Violating features user DID mention = major penalty (-15 to -30).
+
+**Evaluation Criteria (prioritize based on user preferences):**
+1. Location relevance (proximity to stated interests, landmarks, transport)
+2. Price alignment with budget expectations
+3. Amenities matching stated needs (Wi-Fi, parking, pool, etc.)
+4. Star rating / quality level fit
+5. Guest reviews and reputation
+6. Room type suitability
+
+**Instructions:**
+1. First, identify explicit user requirements from their preferences
+2. Check each hotel against these explicit requirements — violations are critical
+3. Then evaluate general fit
+4. Assign a score reflecting overall fit (explicit violations hurt much more)
+5. Provide 2-3 top_reasons: specific, concise phrases (≤10 words) explaining why this hotel works for THIS user
+6. Provide score_penalties: concrete facts explaining point deductions — ALWAYS mention explicit preference violations first
+7. Return ALL hotels sorted by score descending
 """
 
 DEFAULT_BATCH_SIZE = 25
@@ -171,31 +215,16 @@ def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]
     )
 
 
-def prepare_hotel_for_llm(
-    hotel: dict[str, Any],
-    currency: str = "EUR",
-    min_price: float | None = None,
-    max_price: float | None = None,
-) -> dict[str, Any]:
+def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
     """Prepare hotel data for LLM scoring with key information."""
     rates_info: list[dict[str, Any]] = []
     for rate in hotel.get("rates", []):
-        pt = rate.get("payment_options", {}).get("payment_types", [])
-        price_str = pt[0].get("show_amount") if pt else None
-
-        if price_str is not None:
-            try:
-                price = float(price_str)
-                if min_price is not None and price < min_price:
-                    continue
-                if max_price is not None and price > max_price:
-                    continue
-            except (ValueError, TypeError):
-                pass
-
         if len(rates_info) >= MAX_RATES_PER_HOTEL:
             break
 
+        pt = rate.get("payment_options", {}).get("payment_types", [])
+        price_str = pt[0].get("show_amount") if pt else None
+        currency = pt[0].get("show_currency_code", "") if pt else ""
         meal_data = rate.get("meal_data", {})
 
         rate_info = {
@@ -205,19 +234,17 @@ def prepare_hotel_for_llm(
             "has_breakfast": meal_data.get("has_breakfast", False),
         }
 
-        cancel = None
         for p in pt:
             cp = p.get("cancellation_penalties", {})
-            if cp.get("free_cancellation_before"):
-                cancel = cp["free_cancellation_before"][:10]
+            free_cancel = cp.get("free_cancellation_before")
+            if free_cancel:
+                rate_info["free_cancel_before"] = free_cancel[:10]
                 break
-        if cancel:
-            rate_info["free_cancel_before"] = cancel
 
         rates_info.append(rate_info)
 
     amenities = [
-        a.get("name", "") if isinstance(a, dict) else str(a)
+        a
         for g in hotel.get("amenity_groups", [])
         for a in g.get("amenities", [])
     ]
@@ -258,34 +285,28 @@ def _build_prompt(hotels_data: list[dict[str, Any]], user_preferences: str) -> s
 
 
 async def score_hotels(
-    hotels: list[dict[str, Any]],
+    hotels: list[HotelFull],
     user_preferences: str,
     params: ScoringParams | None = None,
 ) -> AsyncIterator[ScoringResult]:
     """Score hotels based on user preferences using LLM.
 
     Args:
-        hotels: List of hotel data to score.
+        hotels: List of combined hotel data to score.
         user_preferences: User preferences for scoring.
-        params: Optional scoring parameters (currency, min_price, max_price, etc.).
+        params: Optional scoring parameters (batch_size, model_name, retries).
 
     Yields:
         ScoringResult events: start, batch_start, retry, progress, error, done.
     """
     params = params or {}
-    currency = params.get("currency", "EUR")
-    min_price = params.get("min_price")
-    max_price = params.get("max_price")
     batch_size = params.get("batch_size", DEFAULT_BATCH_SIZE)
     model_name = params.get("model_name")
     retries = params.get("retries", DEFAULT_RETRIES)
 
     agent = _create_agent(model_name)
 
-    hotels_for_llm = [
-        prepare_hotel_for_llm(h, currency, min_price, max_price)
-        for h in hotels
-    ]
+    hotels_for_llm = [prepare_hotel_for_llm(h) for h in hotels]
 
     total = len(hotels_for_llm)
     total_batches = (total + batch_size - 1) // batch_size
@@ -311,7 +332,7 @@ async def score_hotels(
         "results": None,
     }
 
-    all_results: list[dict[str, Any]] = []
+    all_results: list[HotelScoreDict] = []
     processed = 0
 
     for batch_num, i in enumerate(range(0, total, batch_size), 1):
@@ -376,7 +397,7 @@ async def score_hotels(
                 return
 
         if result is not None:
-            all_results.extend([h.model_dump() for h in result.results])
+            all_results.extend([cast("HotelScoreDict", h.model_dump()) for h in result.results])
 
         processed += len(batch)
 

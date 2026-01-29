@@ -1,111 +1,125 @@
 # CLAUDE.md
 
-## Что это за проект
+## Project Overview
 
-FastAPI-демон для поиска и AI-скоринга отелей через ETG B2B API v3 (Ostrovok/Emerging Travel Group). Разработка ведётся в Jupyter notebook, общий код вынесен в модули. Notebook и API используют одни и те же модули.
+FastAPI service for hotel search and AI-powered scoring via ETG B2B API v3 (Ostrovok/Emerging Travel Group). Development is done in Jupyter notebook, shared code is extracted into modules. Both notebook and API use the same modules.
 
-## Команды
+## Commands
 
 ```bash
-# Установка зависимостей
+# Install dependencies
 uv sync
 
-# Запуск API-сервера
+# Run API server
 uv run uvicorn main:app --host 0.0.0.0 --port 8000
 
-# Запуск с авто-перезагрузкой (разработка)
+# Run with auto-reload (development)
 uv run uvicorn main:app --reload
 
-# Проверка импортов
+# Verify imports
 uv run python -c "from api import create_app; create_app()"
 
-# Линтеры
-uv run ruff check .          # проверка стиля и ошибок
-uv run ruff check . --fix    # автоисправление
-uv run mypy .                # проверка типов
+# Linters
+uv run ruff check .          # check style and errors
+uv run ruff check . --fix    # auto-fix
+uv run mypy .                # type checking
 ```
 
-Тестов пока нет.
+No tests yet.
 
-## Архитектура
+## Architecture
 
 ```
-main.py           → точка входа, создаёт FastAPI app
-config.py         → загружает .env (ETG_KEY_ID, ETG_API_KEY, GEMINI_API_KEY, CORS_ORIGINS)
+main.py           → entry point, creates FastAPI app
+config.py         → loads .env (ETG_KEY_ID, ETG_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, SCORING_MODEL)
 
-etg/              → ETG API клиент
+etg/              → ETG API client
   types.py        → TypedDict: GuestRoom, Hotel, HotelContent, HotelReviews, Review, Region, SearchResults
-  client.py       → ETGClient (sync) и AsyncETGClient (async), httpx + Basic Auth
+  client.py       → ETGClient (async), httpx.AsyncClient + Basic Auth
   exceptions.py   → ETGClientError → ETGAuthError, ETGAPIError, ETGNetworkError
 
-services/         → бизнес-логика (без зависимости от FastAPI)
-  hotels.py       → filter_hotels_by_price, fetch_hotel_content[_async], presort_hotels, get_ostrovok_url
-  reviews.py      → fetch_reviews[_async], filter_reviews → HotelReviewsFiltered
-  scoring.py      → score_hotels (async generator, Gemini LLM, батчами)
+services/         → business logic (async, no FastAPI dependency)
+  hotels.py       → filter_hotels_by_price, fetch_hotel_content, presort_hotels, process_search_results
+  reviews.py      → fetch_reviews, filter_reviews → HotelReviewsFiltered
+  scoring.py      → score_hotels (async generator, Gemini/Claude LLM, batched)
 
-api/              → FastAPI-слой
-  app.py          → create_app() — фабрика, CORS, роуты
+api/              → FastAPI layer
+  app.py          → create_app() — factory, CORS, routes
   schemas.py      → HotelSearchRequest, RegionItem, RegionSuggestResponse (Pydantic BaseModel)
-  events.py       → SSE-события: StatusEvent, ScoringStartEvent, DoneEvent и др.
-  search.py       → search_stream() — async generator, основной пайплайн поиска
+  events.py       → SSE events: EventType enum, HotelSearchStartEvent, HotelsFoundEvent, DoneEvent, etc.
+  search.py       → search_stream() — async generator, main search pipeline
 
-utils/            → вспомогательные функции
-  formatting.py   → format_dates, format_guests (русский текст)
-  sse.py          → sse_event() — сериализация в SSE формат
+utils/            → utility functions
+  sse.py          → sse_event() — SSE serialization
 
-etg_hotels.ipynb  → Jupyter notebook для исследования, использует те же модули
+etg_hotels.ipynb  → Jupyter notebook for research, uses the same modules
 ```
 
-## Ключевые решения
+## Key Decisions
 
-- **TypedDict вместо dataclass/Pydantic для ETG типов** — данные приходят как dict из JSON, TypedDict даёт типизацию без накладных расходов на конвертацию.
-- **Sync + Async клиенты** — sync для notebook, async для API-сервера.
-- **SSE-стриминг** — результаты поиска отдаются постепенно через Server-Sent Events, клиент видит прогресс в реальном времени.
-- **Пре-скоринг перед LLM** — быстрая сортировка по звёздам/отзывам, в LLM уходят только топ-100.
-- **Батчевый LLM-скоринг** — по 25 отелей за запрос к Gemini, с retry логикой.
-- **Общие модули для notebook и API** — изменения в `services/`, `etg/` сразу работают и в notebook, и в сервере.
+- **Async only** — all code is async, no sync versions. Notebook uses `await` and `async for`.
+- **TypedDict over dataclass/Pydantic for ETG types** — data comes as dict from JSON, TypedDict provides typing without conversion overhead.
+- **SSE streaming** — search results are delivered progressively via Server-Sent Events, client sees real-time progress.
+- **EventType enum** — all event types in a single enum, events contain only structured data without formatted text.
+- **Pre-scoring before LLM** — fast sorting by stars/reviews, only top-100 go to LLM.
+- **Batched LLM scoring** — 25 hotels per request, with retry logic.
+- **LLM selection via config** — `SCORING_MODEL` in .env: `gemini-3-flash-preview` or `claude-haiku-4-5`.
 
-## Стиль кода
+## Code Style
 
-- Python 3.13+, используются union types (`str | None`), generic syntax.
-- Pydantic v2 для API-моделей, TypedDict для внутренних данных.
-- Русский язык в UI-сообщениях и комментариях к API.
-- Менеджер пакетов — `uv`, lock-файл `uv.lock`.
-- Переменные окружения через `python-dotenv`, конфигурация в `config.py`.
+- Python 3.13+, uses union types (`str | None`), generic syntax.
+- Pydantic v2 for API models, TypedDict for internal data.
+- Code comments in English.
+- Package manager — `uv`, lock file `uv.lock`.
+- Environment variables via `python-dotenv`, configuration in `config.py`.
 
-## Линтеры
+## Git Commits
 
-Проект использует **Ruff** и **Mypy** в строгом режиме.
+Use **Conventional Commits**, short messages in English:
+
+```
+feat: add hotel scoring endpoint
+fix: handle empty reviews array
+refactor: extract presort logic to separate function
+docs: update API examples
+```
+
+Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
+
+## Linters
+
+Project uses **Ruff** and **Mypy** in strict mode.
 
 ### Ruff
 
-Конфигурация в `pyproject.toml`:
-- `select = ["ALL"]` — включены все правила
-- Исключения (минимум):
-  - Конфликты с форматтером (W191, E111, COM812, ISC001...)
-  - Конфликтующие правила docstring (D203 vs D211, D212 vs D213)
-  - Кириллица в строках (RUF001, RUF002, RUF003)
+Configuration in `pyproject.toml`:
+- `select = ["ALL"]` — all rules enabled
+- Exceptions (minimal):
+  - Formatter conflicts (W191, E111, COM812, ISC001...)
+  - Conflicting docstring rules (D203 vs D211, D212 vs D213)
+  - Cyrillic in strings (RUF001, RUF002, RUF003)
 
-Ключевые соблюдаемые правила:
-- **Docstrings** — Google-стиль для всех публичных модулей, классов и функций
-- **Типизация** — аннотации типов везде, без `Any` где возможно
-- **Исключения** — конкретные классы с сообщениями, без строковых литералов в raise
-- **Константы** — магические числа вынесены в именованные константы
-- **Сложность** — функции до 10 branches, до 50 statements
+Key enforced rules:
+- **Docstrings** — Google style for all public modules, classes, and functions
+- **Typing** — type annotations everywhere, avoid `Any` where possible
+- **Exceptions** — concrete classes with messages, no string literals in raise
+- **Constants** — magic numbers extracted to named constants
+- **Complexity** — functions up to 10 branches, up to 50 statements
 
 ### Mypy
 
-Конфигурация в `pyproject.toml`:
-- `strict = true` — строгий режим
-- `warn_unreachable = true` — предупреждения о недостижимом коде
-- `no_implicit_reexport = true` — явный реэкспорт в `__init__.py`
+Configuration in `pyproject.toml`:
+- `strict = true` — strict mode
+- `warn_unreachable = true` — warnings for unreachable code
+- `no_implicit_reexport = true` — explicit re-export in `__init__.py`
 
-Практики:
-- `typing.cast()` для API-ответов (JSON → TypedDict)
-- `Self` для `__enter__`/`__aenter__` методов
-- `Annotated` для FastAPI параметров с валидацией
+Practices:
+- `typing.cast()` for API responses (JSON → TypedDict)
+- `Self` for `__aenter__` methods
+- `Annotated` for FastAPI parameters with validation
 
-## Внешние API
+## External APIs
 
-- **ETG API** (`https://api.worldota.net`) — поиск отелей, контент, отзывы. Basic Auth.
-- **Google Gemini** (`gemini-3-flash-preview`) — LLM-скоринг. Temperature 0.2, thinking LOW.
+- **ETG API** (`https://api.worldota.net`) — hotel search, content, reviews. Basic Auth.
+- **Google Gemini** (`gemini-3-flash-preview`) — LLM scoring. Temperature 0.2, thinking LOW.
+- **Anthropic Claude** (`claude-haiku-4-5`) — alternative LLM for scoring. Temperature 0.2.
