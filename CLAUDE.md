@@ -62,7 +62,7 @@ etg_hotels.ipynb  → Jupyter notebook for research, uses the same modules
 - **SSE streaming** — search results are delivered progressively via Server-Sent Events, client sees real-time progress.
 - **EventType enum** — all event types in a single enum, events contain only structured data without formatted text.
 - **Pre-scoring before LLM** — fast sorting by stars/reviews, only top-100 go to LLM.
-- **Batched LLM scoring** — 25 hotels per request, with retry logic.
+- **Single LLM scoring request** — one request returns top 10 scored hotels with summary.
 - **LLM selection via config** — `SCORING_MODEL` in .env: `gemini-3-flash-preview` or `claude-haiku-4-5`.
 
 ## Code Style
@@ -80,11 +80,16 @@ Use **Conventional Commits**, short messages in English:
 ```
 feat: add hotel scoring endpoint
 fix: handle empty reviews array
-refactor: extract presort logic to separate function
+refactor: extract presort logic
 docs: update API examples
 ```
 
 Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
+
+Rules:
+- Keep messages short (50 chars max for subject)
+- Do NOT add `Co-Authored-By` footer
+- Do NOT commit automatically — always ask user first: "Commit: `<message>`?"
 
 ## Linters
 
