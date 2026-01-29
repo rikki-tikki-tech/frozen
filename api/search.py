@@ -138,7 +138,14 @@ async def search_stream(
             total_hotels=len(top_hotels),
         ))
 
-        scoring_result = await score_hotels(top_hotels, preferences)
+        scoring_result = await score_hotels(
+            top_hotels,
+            preferences,
+            guests=guests,
+            min_price=min_price_per_night,
+            max_price=max_price_per_night,
+            currency=currency,
+        )
 
         if scoring_result["error"]:
             yield sse_event(ErrorEvent(

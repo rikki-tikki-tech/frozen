@@ -16,6 +16,8 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from config import SCORING_MODEL
 
 if TYPE_CHECKING:
+    from etg import GuestRoom
+
     from .hotels import HotelFull
 
 
@@ -63,57 +65,56 @@ class ScoringResultDict(TypedDict):
 # =============================================================================
 
 SCORING_PROMPT = """\
-You are a hotel recommendation expert. Analyze all hotels and select TOP 10.
+You are an expert Hotel Recommendation Engine specializing in "Value for Money" analysis.
 
-## User Preferences
-{user_preferences}
+## Input Data
+1. **Guests:** {guests_info}
+2. **Price Range:** {price_range}
+3. **User Preferences:** {user_preferences}
+4. **Hotels List:** {hotels_json}
 
-## Hotels to Analyze ({total_hotels} total)
-{hotels_json}
+## Core Scoring Philosophy (The "Brain")
+**CRITICAL:** Do NOT simply rank by lowest price.
+1. **Value for Money:** A $200 5-star hotel is often better than a $100 3-star hotel. Award higher scores to high-quality properties if the price is reasonable for that class.
+2. **Star Rating Weight:** Treat Star Rating as a proxy for service quality. High stars should boost the score unless the user specifically asked for "budget only".
+3. **Preference Matching:**
+   - **Boost:** Heavy points for explicit amenities (e.g., User: "pool" -> Hotel: "has pool").
+   - **Penalty:** Heavy deductions for missing explicit needs (e.g., User: "gym" -> Hotel: "no gym").
 
-## Your Task
+## Field Content Guidelines
 
-1. **Extract criteria** — Identify explicit user requirements from their preferences
-2. **Evaluate completely** — Score ALL available hotels against the criteria (0-100 scale)
-3. **Rank and select** — Sort by score descending, return TOP 10 with full details
-4. **Summarize** — Generate a text summary explaining why these hotels were selected
+Generate the response based on the provided schema. Follow these specific instructions for the content of each field:
 
-**Score Range (0-100):**
-- 90-100: Excellent match — meets all key preferences, no significant drawbacks
-- 70-89: Good match — meets most preferences, minor compromises
-- 50-69: Acceptable — meets some preferences, notable gaps
-- 30-49: Poor match — significant misalignment with preferences
-- 0-29: Very poor — fails to meet most preferences
+### 1. `score` (integer 0-100)
+- **90-100 (Excellent):** Perfect match OR incredible luxury for a good price.
+- **70-89 (Good):** Meets needs, fair price, good stars.
+- **50-69 (Average):** Cheap but low quality, or expensive but average quality.
+- **0-49 (Poor):** Missing critical user requirements or extremely overpriced.
 
-**Critical Rule — Explicit Preference Violations:**
-If user explicitly stated a preference and hotel does NOT meet it,
-apply HEAVY penalty (-15 to -30 points per violation).
-- User said "с бассейном" → hotel has no pool → severe penalty
-- User said "в центре" → hotel is far from center → severe penalty
-Missing features user did NOT mention = minor penalty (-5 to -10).
-Violating features user DID mention = major penalty (-15 to -30).
+### 2. `top_reasons` (list of strings)
+Do not write generic fluff. Be specific about value.
+- **Format:** [Specific Match], [Value Proposition], [Quality Indicator].
+- **Examples:**
+  - "Includes requested swimming pool"
+  - "Excellent 5-star rating for only $150 (Great Deal)"
+  - "Located in City Center as requested"
 
-**Evaluation Criteria (prioritize based on user preeferences):**
-1. Location relevance (proximity to stated interests, landmarks, transport)
-2. Price alignment with budget expectations
-3. Amenities matching stated needs (Wi-Fi, parking, pool, etc.)
-4. Star rating / quality level fit
-5. Guest reviews and reputation
-6. Room type suitability
+### 3. `score_penalties` (list of strings)
+Explain exactly why the score is not 100.
+- **Format:** [Missing Feature], [Quality Issue], [Price Issue].
+- **Examples:**
+  - "Missing requested breakfast"
+  - "Far from city center (5km)"
+  - "Low guest rating (6.5/10)"
+  - "Price ($400) is too high for a 3-star hotel"
 
-**For each hotel in TOP 10:**
-- top_reasons: 1-5 phrases why this hotel matches user needs
-- score_penalties: explain several phrases 1-5: what's missing, what doesn't match preferences (empty if none)
-
-**Summary (text format):**
-Write a brief comparison explaining why selected hotels are better than alternatives.
-Include specific examples with hotel IDs, names, and prices to illustrate:
-- Price range of all evaluated hotels (e.g., "от 300 до 2000")
-- Why cheaper hotels scored lower (e.g., "Hotel X (id: abc, 320₽) — нет бассейна, далеко от центра")
-- Why some expensive hotels didn't make top 10 (if applicable)
-- Key tradeoffs user should know about (e.g., "все отели до 500₽ без завтрака")
-
-Goal: user should understand the full picture without manually reviewing rejected options.
+### 4. `summary` (string)
+Write a strategic market analysis (4-6 sentences) helping the user understand the choice.
+**CRITICAL REQUIREMENT:** You MUST cite specific examples of lower-ranked hotels to explain the trade-offs.
+- **Range:** Start with the price range analyzed.
+- **Contrast:** Explain why the Top 10 are better than specific cheaper/rejected alternatives.
+- **Explicit Citations:** When mentioning rejected hotels, you **MUST include their Name and ID**.
+- **Example Pattern:** "We analyzed hotels from $50 to $500. While 'Budget Inn' (ID: 123) is the cheapest ($50), it was ranked low due to missing AC. 'Luxury Stay' (ID: 456) was excluded because its $500 price tag is not justified by its 3-star rating. The selected winners offer the best balance of price and amenities."
 """
 
 TOP_HOTELS_COUNT = 10
@@ -159,7 +160,7 @@ def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]
 
     google_settings = GoogleModelSettings(
         temperature=0.2,
-        google_thinking_config={"thinking_level": ThinkingLevel.LOW},
+        google_thinking_config={"thinking_level": ThinkingLevel.MEDIUM},
     )
     google_model = GoogleModel(model_name)
     return Agent(google_model, output_type=ScoringResponse, model_settings=google_settings)
@@ -227,9 +228,45 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
 
 
 
-def _build_prompt(hotels_data: list[dict[str, Any]], user_preferences: str) -> str:
+def _format_guests_info(guests: list[GuestRoom]) -> str:
+    """Format guests info for prompt."""
+    total_adults = sum(g.get("adults", 0) for g in guests)
+    all_children = [age for g in guests for age in g.get("children", [])]
+
+    if all_children:
+        ages = ", ".join(map(str, all_children))
+        return f"{total_adults} adults, {len(all_children)} children (ages: {ages})"
+    return f"{total_adults} adults"
+
+
+def _format_price_range(
+    min_price: float | None,
+    max_price: float | None,
+    currency: str | None,
+) -> str:
+    """Format price range for prompt."""
+    curr = currency or "RUB"
+    if min_price is not None and max_price is not None:
+        return f"{min_price:.0f} - {max_price:.0f} {curr} per night"
+    if min_price is not None:
+        return f"from {min_price:.0f} {curr} per night"
+    if max_price is not None:
+        return f"up to {max_price:.0f} {curr} per night"
+    return "not specified"
+
+
+def _build_prompt(  # noqa: PLR0913
+    hotels_data: list[dict[str, Any]],
+    user_preferences: str,
+    guests: list[GuestRoom],
+    min_price: float | None,
+    max_price: float | None,
+    currency: str | None,
+) -> str:
     """Build scoring prompt for hotels."""
     return SCORING_PROMPT.format(
+        guests_info=_format_guests_info(guests),
+        price_range=_format_price_range(min_price, max_price, currency),
         user_preferences=user_preferences,
         total_hotels=len(hotels_data),
         hotels_json=json.dumps(hotels_data, ensure_ascii=False),
@@ -241,9 +278,13 @@ def _build_prompt(hotels_data: list[dict[str, Any]], user_preferences: str) -> s
 # =============================================================================
 
 
-async def score_hotels(
+async def score_hotels(  # noqa: PLR0913
     hotels: list[HotelFull],
     user_preferences: str,
+    guests: list[GuestRoom],
+    min_price: float | None = None,
+    max_price: float | None = None,
+    currency: str | None = None,
     model_name: str | None = None,
     retries: int = DEFAULT_RETRIES,
 ) -> ScoringResultDict:
@@ -256,6 +297,10 @@ async def score_hotels(
     Args:
         hotels: List of combined hotel data to score.
         user_preferences: User preferences for scoring.
+        guests: List of room configurations with adults and children.
+        min_price: Minimum price per night filter (or None if not set).
+        max_price: Maximum price per night filter (or None if not set).
+        currency: Currency code (e.g., 'RUB', 'USD').
         model_name: Optional model name override.
         retries: Number of retry attempts on failure.
 
@@ -265,7 +310,9 @@ async def score_hotels(
     agent = _create_agent(model_name)
 
     hotels_for_llm = [prepare_hotel_for_llm(h) for h in hotels]
-    prompt = _build_prompt(hotels_for_llm, user_preferences)
+    prompt = _build_prompt(
+        hotels_for_llm, user_preferences, guests, min_price, max_price, currency
+    )
     estimated_tokens = estimate_tokens(prompt)
 
     last_error: str | None = None
