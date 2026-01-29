@@ -19,7 +19,7 @@ from config import SCORING_MODEL
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from .hotels import HotelFull
+    from .hotels import HotelFull, HotelScored
 
 
 class HotelScoreDict(TypedDict):
@@ -120,7 +120,8 @@ class ScoringParams(TypedDict, total=False):
     retries: int
 
 
-SCORING_PROMPT = """You are a hotel recommendation expert. Score each hotel based on how well it matches the user's preferences.
+SCORING_PROMPT = """\
+You are a hotel recommendation expert. Score hotels based on user preferences.
 
 ## User Preferences
 {user_preferences}
@@ -138,11 +139,12 @@ SCORING_PROMPT = """You are a hotel recommendation expert. Score each hotel base
 - 0-29: Very poor — fails to meet most preferences
 
 **Critical Rule — Explicit Preference Violations:**
-If the user explicitly stated a preference and the hotel does NOT meet it, apply a HEAVY penalty (-15 to -30 points per violation).
+If user explicitly stated a preference and hotel does NOT meet it,
+apply HEAVY penalty (-15 to -30 points per violation).
 - User said "с бассейном" → hotel has no pool → severe penalty
 - User said "в центре" → hotel is far from center → severe penalty
 
-Missing features that user did NOT mention = minor penalty (-5 to -10).
+Missing features user did NOT mention = minor penalty (-5 to -10).
 Violating features user DID mention = major penalty (-15 to -30).
 
 **Evaluation Criteria (prioritize based on user preferences):**
@@ -158,8 +160,8 @@ Violating features user DID mention = major penalty (-15 to -30).
 2. Check each hotel against these explicit requirements — violations are critical
 3. Then evaluate general fit
 4. Assign a score reflecting overall fit (explicit violations hurt much more)
-5. Provide 2-3 top_reasons: specific, concise phrases (≤10 words) explaining why this hotel works for THIS user
-6. Provide score_penalties: concrete facts explaining point deductions — ALWAYS mention explicit preference violations first
+5. top_reasons: 1-5 concise phrases (≤10 words) why this hotel works for user
+6. score_penalties: facts explaining deductions — mention explicit violations first
 7. Return ALL hotels sorted by score descending
 """
 
@@ -427,3 +429,139 @@ async def score_hotels(
         "error": None,
         "results": all_results,
     }
+
+
+# =============================================================================
+# Summarization
+# =============================================================================
+
+SUMMARY_TOP_HOTELS = 10
+
+
+class HotelRecommendation(BaseModel):
+    """Single hotel recommendation in summary."""
+
+    hotel_id: str
+    hotel_name: str
+    why_recommended: str
+
+
+class SearchSummary(BaseModel):
+    """LLM-generated summary of search results."""
+
+    overview: str
+    top_picks: list[HotelRecommendation]
+    considerations: str
+    final_advice: str
+
+
+SUMMARY_PROMPT = """\
+You are a helpful travel assistant. User searched for hotels with preferences:
+
+## User Preferences
+{user_preferences}
+
+## Top {top_count} Search Results (sorted by score)
+{hotels_json}
+
+## Your Task
+
+Provide a helpful summary for the user:
+
+1. **overview**: 2-3 sentences about how well the search matched preferences.
+   Be honest — if results don't match well, say so.
+
+2. **top_picks**: List 2-4 best hotels with:
+   - hotel_id: exact ID from the data
+   - hotel_name: hotel name
+   - why_recommended: 1-2 sentences why THIS hotel fits THIS user's needs
+
+3. **considerations**: Important trade-offs to consider
+   (price vs location, missing amenities, etc.)
+
+4. **final_advice**: One clear recommendation — which hotel to book and why,
+   or what to search for differently if results are poor.
+
+Be concise, specific, and helpful. Reference actual hotel names and features.
+"""
+
+
+def _create_summary_agent(model_name: str | None = None) -> Agent[None, SearchSummary]:
+    """Create summarization agent with specified model."""
+    if model_name is None:
+        model_name = _get_default_model()
+
+    if _is_anthropic_model(model_name):
+        anthropic_settings = AnthropicModelSettings(
+            temperature=0.3,
+            timeout=120.0,
+        )
+        anthropic_model = AnthropicModel(model_name)
+        return Agent(
+            anthropic_model, output_type=SearchSummary, model_settings=anthropic_settings
+        )
+
+    google_settings = GoogleModelSettings(
+        temperature=0.3,
+    )
+    google_model = GoogleModel(model_name)
+    return Agent(
+        google_model, output_type=SearchSummary, model_settings=google_settings
+    )
+
+
+def _prepare_hotel_for_summary(hotel: HotelScored) -> dict[str, Any]:
+    """Prepare scored hotel data for summary prompt."""
+    return {
+        "hotel_id": hotel.get("id", ""),
+        "name": hotel.get("name", ""),
+        "score": hotel.get("score", 0),
+        "top_reasons": hotel.get("top_reasons", []),
+        "score_penalties": hotel.get("score_penalties", []),
+        "stars": hotel.get("star_rating", 0),
+        "kind": hotel.get("kind", ""),
+        "address": hotel.get("address", ""),
+    }
+
+
+class SummaryResult(TypedDict):
+    """Result of summarize_results function."""
+
+    summary: SearchSummary | None
+    error: str | None
+
+
+async def summarize_results(
+    scored_hotels: list[HotelScored],
+    user_preferences: str,
+    model_name: str | None = None,
+    top_count: int = SUMMARY_TOP_HOTELS,
+) -> SummaryResult:
+    """Generate LLM summary of search results.
+
+    Args:
+        scored_hotels: List of scored hotels.
+        user_preferences: Original user search preferences.
+        model_name: Optional model name override.
+        top_count: Number of top hotels to include in summary.
+
+    Returns:
+        SummaryResult with summary or error.
+    """
+    agent = _create_summary_agent(model_name)
+
+    top_hotels = scored_hotels[:top_count]
+    hotels_for_summary = [_prepare_hotel_for_summary(h) for h in top_hotels]
+
+    prompt = SUMMARY_PROMPT.format(
+        user_preferences=user_preferences,
+        top_count=len(hotels_for_summary),
+        hotels_json=json.dumps(hotels_for_summary, ensure_ascii=False, indent=2),
+    )
+
+    try:
+        response = await agent.run(prompt)
+    except (ValidationError, ValueError, httpx.HTTPError, UnexpectedModelBehavior) as e:
+        return {"summary": None, "error": str(e)}
+    else:
+        return {"summary": response.output, "error": None}

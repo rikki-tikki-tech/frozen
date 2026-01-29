@@ -6,7 +6,7 @@ from enum import Enum
 from pydantic import BaseModel
 
 from etg import GuestRoom
-from services import HotelScored
+from services import HotelScored, SearchSummary
 
 
 class EventType(str, Enum):
@@ -32,6 +32,10 @@ class EventType(str, Enum):
     SCORING_BATCH_START = "scoring_batch_start"
     SCORING_RETRY = "scoring_retry"
     SCORING_PROGRESS = "scoring_progress"
+
+    # Phase 6: Summary
+    SUMMARY_START = "summary_start"
+    SUMMARY_DONE = "summary_done"
 
     # Terminal
     ERROR = "error"
@@ -140,6 +144,20 @@ class ScoringProgressEvent(BaseModel):
     total: int
 
 
+class SummaryStartEvent(BaseModel):
+    """Summary generation started."""
+
+    type: EventType = EventType.SUMMARY_START
+    top_hotels_count: int
+
+
+class SummaryDoneEvent(BaseModel):
+    """Summary generation completed."""
+
+    type: EventType = EventType.SUMMARY_DONE
+    summary: SearchSummary
+
+
 class ErrorEvent(BaseModel):
     """Error event."""
 
@@ -169,6 +187,8 @@ SSEEvent = (
     | ScoringBatchStartEvent
     | ScoringRetryEvent
     | ScoringProgressEvent
+    | SummaryStartEvent
+    | SummaryDoneEvent
     | ErrorEvent
     | DoneEvent
 )

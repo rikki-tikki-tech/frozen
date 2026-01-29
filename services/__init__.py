@@ -28,9 +28,12 @@ from .scoring import (
     HotelScoreDict,
     ScoringParams,
     ScoringResult,
+    SearchSummary,
+    SummaryResult,
     estimate_tokens,
     prepare_hotel_for_llm,
     score_hotels,
+    summarize_results,
 )
 
 __all__ = [
@@ -45,6 +48,8 @@ __all__ = [
     "ScoringParams",
     "ScoringResult",
     "SearchHotelsResult",
+    "SearchSummary",
+    "SummaryResult",
     "batch_get_content",
     "batch_get_reviews",
     "calculate_prescore",
@@ -60,4 +65,5 @@ __all__ = [
     "sample_hotels",
     "score_hotels",
     "search_hotels",
+    "summarize_results",
 ]

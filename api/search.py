@@ -20,6 +20,7 @@ from services import (
     sample_hotels,
     score_hotels,
     search_hotels,
+    summarize_results,
 )
 from utils import sse_event
 
@@ -37,6 +38,8 @@ from .events import (
     ScoringProgressEvent,
     ScoringRetryEvent,
     ScoringStartEvent,
+    SummaryDoneEvent,
+    SummaryStartEvent,
 )
 from .schemas import HotelSearchRequest
 
@@ -189,8 +192,16 @@ async def search_stream(  # noqa: PLR0915
             if result["type"] == "done" and result["results"] is not None:
                 scoring_results = result["results"]
 
-        # Finalize and yield results
+        # Finalize scored hotels
         scored_hotels = finalize_scored_hotels(top_hotels, scoring_results)
+
+        # Phase 6: Summary
+        yield sse_event(SummaryStartEvent(top_hotels_count=min(10, len(scored_hotels))))
+        summary_result = await summarize_results(scored_hotels, preferences)
+        if summary_result["summary"] is not None:
+            yield sse_event(SummaryDoneEvent(summary=summary_result["summary"]))
+
+        # Done
         yield sse_event(DoneEvent(total_scored=len(scored_hotels), hotels=scored_hotels))
 
     except ETGAPIError as e:
