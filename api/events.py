@@ -6,7 +6,7 @@ from enum import Enum
 from pydantic import BaseModel
 
 from etg import GuestRoom
-from services import HotelScored, SearchSummary
+from services import HotelScored
 
 
 class EventType(str, Enum):
@@ -29,13 +29,7 @@ class EventType(str, Enum):
 
     # Phase 5: Scoring
     SCORING_START = "scoring_start"
-    SCORING_BATCH_START = "scoring_batch_start"
-    SCORING_RETRY = "scoring_retry"
-    SCORING_PROGRESS = "scoring_progress"
-
-    # Phase 6: Summary
-    SUMMARY_START = "summary_start"
-    SUMMARY_DONE = "summary_done"
+    SCORING_DONE = "scoring_done"
 
     # Terminal
     ERROR = "error"
@@ -112,50 +106,14 @@ class ScoringStartEvent(BaseModel):
 
     type: EventType = EventType.SCORING_START
     total_hotels: int
-    total_batches: int
-    batch_size: int
-    estimated_tokens: int
 
 
-class ScoringBatchStartEvent(BaseModel):
-    """Scoring batch started."""
+class ScoringDoneEvent(BaseModel):
+    """Scoring completed with summary."""
 
-    type: EventType = EventType.SCORING_BATCH_START
-    batch: int
-    total_batches: int
-    hotels_in_batch: int
-    estimated_tokens: int
-
-
-class ScoringRetryEvent(BaseModel):
-    """Scoring batch retry."""
-
-    type: EventType = EventType.SCORING_RETRY
-    batch: int
-    attempt: int
-    max_attempts: int
-
-
-class ScoringProgressEvent(BaseModel):
-    """Scoring progress."""
-
-    type: EventType = EventType.SCORING_PROGRESS
-    processed: int
-    total: int
-
-
-class SummaryStartEvent(BaseModel):
-    """Summary generation started."""
-
-    type: EventType = EventType.SUMMARY_START
-    top_hotels_count: int
-
-
-class SummaryDoneEvent(BaseModel):
-    """Summary generation completed."""
-
-    type: EventType = EventType.SUMMARY_DONE
-    summary: SearchSummary
+    type: EventType = EventType.SCORING_DONE
+    scored_count: int
+    summary: str
 
 
 class ErrorEvent(BaseModel):
@@ -184,11 +142,7 @@ SSEEvent = (
     | BatchGetReviewsDoneEvent
     | PresortDoneEvent
     | ScoringStartEvent
-    | ScoringBatchStartEvent
-    | ScoringRetryEvent
-    | ScoringProgressEvent
-    | SummaryStartEvent
-    | SummaryDoneEvent
+    | ScoringDoneEvent
     | ErrorEvent
     | DoneEvent
 )

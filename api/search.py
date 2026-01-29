@@ -9,8 +9,6 @@ from etg import ETGAPIError, ETGClient, ETGNetworkError
 from services import (
     CONTENT_BATCH_SIZE,
     REVIEWS_BATCH_SIZE,
-    HotelScoreDict,
-    ScoringResult,
     batch_get_content,
     batch_get_reviews,
     combine_hotels_data,
@@ -20,7 +18,6 @@ from services import (
     sample_hotels,
     score_hotels,
     search_hotels,
-    summarize_results,
 )
 from utils import sse_event
 
@@ -34,12 +31,8 @@ from .events import (
     HotelSearchDoneEvent,
     HotelSearchStartEvent,
     PresortDoneEvent,
-    ScoringBatchStartEvent,
-    ScoringProgressEvent,
-    ScoringRetryEvent,
+    ScoringDoneEvent,
     ScoringStartEvent,
-    SummaryDoneEvent,
-    SummaryStartEvent,
 )
 from .schemas import HotelSearchRequest
 
@@ -47,48 +40,7 @@ DEFAULT_PREFERENCES = "Лучшее соотношение цены и каче�
 PRESORT_LIMIT = 100
 
 
-def _scoring_result_to_sse(result: ScoringResult) -> str | None:
-    """Convert scoring result to SSE event string."""
-    if result["type"] == "start" and result["start"] is not None:
-        start = result["start"]
-        return sse_event(ScoringStartEvent(
-            total_hotels=start["total_hotels"],
-            total_batches=start["total_batches"],
-            batch_size=start["batch_size"],
-            estimated_tokens=start["estimated_tokens"],
-        ))
-    if result["type"] == "batch_start" and result["batch_start"] is not None:
-        bs = result["batch_start"]
-        return sse_event(ScoringBatchStartEvent(
-            batch=bs["batch"],
-            total_batches=bs["total_batches"],
-            hotels_in_batch=bs["hotels_in_batch"],
-            estimated_tokens=bs["estimated_tokens"],
-        ))
-    if result["type"] == "retry" and result["retry"] is not None:
-        retry = result["retry"]
-        return sse_event(ScoringRetryEvent(
-            batch=retry["batch"],
-            attempt=retry["attempt"],
-            max_attempts=retry["max_attempts"],
-        ))
-    if result["type"] == "error" and result["error"] is not None:
-        error = result["error"]
-        return sse_event(ErrorEvent(
-            error_type=error["error_type"],
-            error_message=error["message"],
-            batch=error["batch"],
-        ))
-    if result["type"] == "progress" and result["progress"] is not None:
-        progress = result["progress"]
-        return sse_event(ScoringProgressEvent(
-            processed=progress["processed"],
-            total=progress["total"],
-        ))
-    return None
-
-
-async def search_stream(  # noqa: PLR0915
+async def search_stream(
     request: HotelSearchRequest,
     etg_client: ETGClient,
 ) -> AsyncIterator[str]:
@@ -181,27 +133,27 @@ async def search_stream(  # noqa: PLR0915
         ))
 
         # Phase 5: LLM Scoring
-        scoring_results: list[HotelScoreDict] = []
         preferences = user_preferences or DEFAULT_PREFERENCES
-        async for result in score_hotels(top_hotels, preferences):
-            event = _scoring_result_to_sse(result)
-            if event:
-                yield event
-            if result["type"] == "error":
-                break
-            if result["type"] == "done" and result["results"] is not None:
-                scoring_results = result["results"]
+        yield sse_event(ScoringStartEvent(
+            total_hotels=len(top_hotels),
+        ))
 
-        # Finalize scored hotels
-        scored_hotels = finalize_scored_hotels(top_hotels, scoring_results)
+        scoring_result = await score_hotels(top_hotels, preferences)
 
-        # Phase 6: Summary
-        yield sse_event(SummaryStartEvent(top_hotels_count=min(10, len(scored_hotels))))
-        summary_result = await summarize_results(scored_hotels, preferences)
-        if summary_result["summary"] is not None:
-            yield sse_event(SummaryDoneEvent(summary=summary_result["summary"]))
+        if scoring_result["error"]:
+            yield sse_event(ErrorEvent(
+                error_type="ScoringError",
+                error_message=scoring_result["error"],
+            ))
+            return
 
-        # Done
+        yield sse_event(ScoringDoneEvent(
+            scored_count=len(scoring_result["results"]),
+            summary=scoring_result["summary"],
+        ))
+
+        # Finalize and yield results
+        scored_hotels = finalize_scored_hotels(top_hotels, scoring_result["results"])
         yield sse_event(DoneEvent(total_scored=len(scored_hotels), hotels=scored_hotels))
 
     except ETGAPIError as e:

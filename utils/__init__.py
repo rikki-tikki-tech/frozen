@@ -1,5 +1,6 @@
-"""Utility functions for SSE events."""
+"""Utility functions."""
 
 from .sse import sse_event
+from .urls import ostrovok_url
 
-__all__ = ["sse_event"]
+__all__ = ["ostrovok_url", "sse_event"]
