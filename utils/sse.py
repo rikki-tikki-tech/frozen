@@ -1,3 +1,5 @@
+"""Server-Sent Events (SSE) formatting utilities."""
+
 import json
 from typing import Any
 

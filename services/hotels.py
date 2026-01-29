@@ -1,8 +1,9 @@
 """Hotel data processing, filtering, and pre-scoring."""
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
-from etg import AsyncETGClient, ETGClient, Hotel, HotelContent
+from etg import AsyncETGClient, ETGClient, Hotel, HotelContent, HotelRate
 
 # Callback type: (batch_num, total_batches, hotels_loaded, total_hotels) -> None
 ContentProgressCallback = Callable[[int, int, int, int], Awaitable[None]]
@@ -37,33 +38,35 @@ def get_hotel_nights(hotel: Hotel) -> int:
     return 1
 
 
-def get_hotel_price(hotel: Hotel) -> float | None:
-    """Extract average price per night from cheapest rate's daily_prices."""
-    rates = hotel.get("rates", [])
-    if not rates:
+def _get_rate_price(rate: HotelRate) -> float | None:
+    """Extract total price from a rate's payment options.
+
+    Args:
+        rate: Hotel rate data.
+
+    Returns:
+        Total price or None if not available.
+    """
+    payment_types = rate.get("payment_options", {}).get("payment_types", [])
+    if not payment_types:
         return None
-
-    cheapest_rate = None
-    min_price = float('inf')
-
-    for rate in rates:
-        payment_types = rate.get("payment_options", {}).get("payment_types", [])
-        if payment_types:
-            try:
-                price = float(payment_types[0].get("show_amount", 0))
-                if price > 0 and price < min_price:
-                    min_price = price
-                    cheapest_rate = rate
-            except (ValueError, TypeError):
-                continue
-
-    if cheapest_rate is None:
+    try:
+        price = float(payment_types[0].get("show_amount", 0))
+    except (ValueError, TypeError):
         return None
+    else:
+        return price if price > 0 else None
 
-    daily_prices = cheapest_rate.get("daily_prices", [])
-    if not daily_prices:
-        return None
 
+def _parse_daily_prices(daily_prices: list[str]) -> list[float]:
+    """Parse daily prices list into valid float values.
+
+    Args:
+        daily_prices: List of price strings.
+
+    Returns:
+        List of valid positive prices.
+    """
     prices = []
     for p in daily_prices:
         try:
@@ -72,7 +75,37 @@ def get_hotel_price(hotel: Hotel) -> float | None:
                 prices.append(price)
         except (ValueError, TypeError):
             continue
+    return prices
 
+
+def get_hotel_price(hotel: Hotel) -> float | None:
+    """Extract average price per night from cheapest rate's daily_prices.
+
+    Args:
+        hotel: Hotel data dictionary.
+
+    Returns:
+        Average price per night or None if not available.
+    """
+    rates = hotel.get("rates", [])
+    if not rates:
+        return None
+
+    # Find cheapest rate
+    cheapest_rate = None
+    min_price = float("inf")
+    for rate in rates:
+        price = _get_rate_price(rate)
+        if price is not None and price < min_price:
+            min_price = price
+            cheapest_rate = rate
+
+    if cheapest_rate is None:
+        return None
+
+    # Calculate average daily price
+    daily_prices = cheapest_rate.get("daily_prices", [])
+    prices = _parse_daily_prices(daily_prices)
     if not prices:
         return None
 
@@ -147,7 +180,9 @@ async def fetch_hotel_content_async(
     return content_map
 
 
-def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
+def calculate_prescore(
+    hotel: dict[str, Any], reviews_data: dict[str, Any] | None = None,
+) -> float:
     """
     Calculate quick pre-score for sorting before LLM.
 
@@ -158,12 +193,12 @@ def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
     """
     score = 0.0
 
-    stars = hotel.get("star_rating", 0)
+    stars: int = hotel.get("star_rating", 0)
     score += stars * 5
 
     if reviews_data:
-        total = reviews_data.get("total_reviews", 0)
-        positive = reviews_data.get("positive_count", 0)
+        total: int = reviews_data.get("total_reviews", 0)
+        positive: int = reviews_data.get("positive_count", 0)
 
         if total > 0:
             score += (positive / total) * 50
@@ -174,12 +209,12 @@ def calculate_prescore(hotel: dict, reviews_data: dict | None = None) -> float:
 
 
 def presort_hotels(
-    hotels: list[dict],
-    reviews_map: dict[int, dict],
+    hotels: list[dict[str, Any]],
+    reviews_map: dict[int, dict[str, Any]],
     limit: int = 100,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Sort hotels by pre-score and return top N."""
-    scored = []
+    scored: list[dict[str, Any]] = []
     for hotel in hotels:
         hid = hotel.get("hid")
         reviews_data = reviews_map.get(hid) if hid else None

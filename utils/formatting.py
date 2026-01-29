@@ -1,3 +1,5 @@
+"""Date and guest formatting utilities for Russian UI."""
+
 from datetime import date
 
 from etg import GuestRoom
@@ -24,8 +26,13 @@ def format_guests(guests: list[GuestRoom]) -> str:
 
 def format_dates(checkin: date, checkout: date) -> str:
     """Format dates: '15–17 янв'."""
-    months = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+    months = [
+        "янв", "фев", "мар", "апр", "мая", "июн",
+        "июл", "авг", "сен", "окт", "ноя", "дек",
+    ]
+    m_in = months[checkin.month - 1]
+    m_out = months[checkout.month - 1]
 
     if checkin.month == checkout.month:
-        return f"{checkin.day}–{checkout.day} {months[checkin.month - 1]}"
-    return f"{checkin.day} {months[checkin.month - 1]} – {checkout.day} {months[checkout.month - 1]}"
+        return f"{checkin.day}–{checkout.day} {m_in}"
+    return f"{checkin.day} {m_in} – {checkout.day} {m_out}"
