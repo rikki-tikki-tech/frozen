@@ -73,37 +73,47 @@ You are a hotel recommendation expert. Analyze all hotels and select TOP 10.
 
 ## Your Task
 
-1. **Analyze ALL hotels** against user preferences
-2. **Select TOP 10** that best match the preferences
-3. **Score each** of the top 10 (0-100 scale)
-4. **Write a summary** explaining the overall selection
+1. **Extract criteria** — Identify explicit user requirements from their preferences
+2. **Evaluate completely** — Score ALL available hotels against the criteria (0-100 scale)
+3. **Rank and select** — Sort by score descending, return TOP 10 with full details
+4. **Summarize** — Generate a text summary explaining why these hotels were selected
 
-## Scoring Guidelines (0-100)
-
-- 90-100: Excellent match — meets all key preferences
+**Score Range (0-100):**
+- 90-100: Excellent match — meets all key preferences, no significant drawbacks
 - 70-89: Good match — meets most preferences, minor compromises
 - 50-69: Acceptable — meets some preferences, notable gaps
-- 30-49: Poor match — significant misalignment
-- 0-29: Very poor — fails most preferences
+- 30-49: Poor match — significant misalignment with preferences
+- 0-29: Very poor — fails to meet most preferences
 
-**Critical:** If user explicitly stated a requirement and hotel violates it,
-apply heavy penalty (-15 to -30 points).
+**Critical Rule — Explicit Preference Violations:**
+If user explicitly stated a preference and hotel does NOT meet it,
+apply HEAVY penalty (-15 to -30 points per violation).
+- User said "с бассейном" → hotel has no pool → severe penalty
+- User said "в центре" → hotel is far from center → severe penalty
+Missing features user did NOT mention = minor penalty (-5 to -10).
+Violating features user DID mention = major penalty (-15 to -30).
 
-## Output Format
+**Evaluation Criteria (prioritize based on user preeferences):**
+1. Location relevance (proximity to stated interests, landmarks, transport)
+2. Price alignment with budget expectations
+3. Amenities matching stated needs (Wi-Fi, parking, pool, etc.)
+4. Star rating / quality level fit
+5. Guest reviews and reputation
+6. Room type suitability
 
-**results**: Array of exactly 10 hotels (sorted by score desc):
-- hotel_id: exact ID from input data
-- score: 0-100
-- top_reasons: 2-4 phrases why this hotel matches user needs
-- score_penalties: what's missing or problematic (empty if none)
+**For each hotel in TOP 10:**
+- top_reasons: 1-5 phrases why this hotel matches user needs
+- score_penalties: explain several phrases 1-5: what's missing, what doesn't match preferences (empty if none)
 
-**summary**: 3-5 sentences explaining:
-- Price range across all {total_hotels} hotels (min to max)
-- Why cheaper options scored lower (what they lack)
-- Key trade-offs in the selection (price vs quality vs location)
-- Overall assessment: are there good options for these preferences?
+**Summary (text format):**
+Write a brief comparison explaining why selected hotels are better than alternatives.
+Include specific examples with hotel IDs, names, and prices to illustrate:
+- Price range of all evaluated hotels (e.g., "от 300 до 2000")
+- Why cheaper hotels scored lower (e.g., "Hotel X (id: abc, 320₽) — нет бассейна, далеко от центра")
+- Why some expensive hotels didn't make top 10 (if applicable)
+- Key tradeoffs user should know about (e.g., "все отели до 500₽ без завтрака")
 
-Be specific. Reference actual prices, hotel names, and concrete features.
+Goal: user should understand the full picture without manually reviewing rejected options.
 """
 
 TOP_HOTELS_COUNT = 10
@@ -167,29 +177,33 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         currency = pt[0].get("show_currency_code", "") if pt else ""
         meal_data = rate.get("meal_data", {})
 
-        rate_info: dict[str, Any] = {
-            "room": rate.get("room_name", "")[:50],
+        rate_info = {
+            "room": rate.get("room_name", "")[:60],
             "price": f"{price_str} {currency}" if price_str else None,
             "meal": meal_data.get("value", rate.get("meal", "")),
+            "has_breakfast": meal_data.get("has_breakfast", False),
         }
 
         for p in pt:
             cp = p.get("cancellation_penalties", {})
             free_cancel = cp.get("free_cancellation_before")
             if free_cancel:
-                rate_info["free_cancel"] = free_cancel[:10]
+                rate_info["free_cancel_before"] = free_cancel[:10]
                 break
 
         rates_info.append(rate_info)
 
     amenities = [
-        a for g in hotel.get("amenity_groups", []) for a in g.get("amenities", [])
+        a
+        for g in hotel.get("amenity_groups", [])
+        for a in g.get("amenities", [])
     ]
 
     hr = hotel.get("reviews", {})
     raw_reviews = hr.get("reviews", []) if isinstance(hr, dict) else []
     reviews = [
         {
+            "id": r.get("id"),
             "rating": r.get("rating"),
             "plus": (r.get("review_plus") or "")[:REVIEW_TEXT_MAX_LENGTH],
             "minus": (r.get("review_minus") or "")[:REVIEW_TEXT_MAX_LENGTH],
@@ -203,10 +217,14 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         "stars": hotel.get("star_rating", 0),
         "kind": hotel.get("kind", ""),
         "address": hotel.get("address", ""),
+        "description": hotel.get("description_struct", ""),
+        "facts": hotel.get("facts", []),
+        "serp_filters": hotel.get("serp_filters", []),
         "rates": rates_info,
         "amenities": amenities[:MAX_AMENITIES_PER_HOTEL],
         "reviews": reviews,
     }
+
 
 
 def _build_prompt(hotels_data: list[dict[str, Any]], user_preferences: str) -> str:
