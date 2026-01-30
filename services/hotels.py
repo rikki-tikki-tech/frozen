@@ -83,9 +83,17 @@ def combine_hotels_data(
         "reviews": [],
         "total_reviews": 0,
         "filtered_by_age": 0,
-        "positive_count": 0,
-        "neutral_count": 0,
-        "negative_count": 0,
+        "avg_rating": None,
+        "detailed_averages": {
+            "cleanness": None,
+            "location": None,
+            "price": None,
+            "services": None,
+            "room": None,
+            "meal": None,
+            "wifi": None,
+            "hygiene": None,
+        },
     }
 
     combined: list[HotelFull] = []
@@ -358,7 +366,7 @@ def calculate_prescore(
 
     Score components (0-100):
     - Stars: 0-25 points (star_rating * 5)
-    - Reviews ratio: 0-50 points (positive / total * 50)
+    - Avg rating: 0-50 points (avg_rating / 10 * 50)
     - Reviews count: 0-25 points (min(total, 25))
 
     Args:
@@ -375,10 +383,10 @@ def calculate_prescore(
 
     if reviews_data:
         total = reviews_data.get("total_reviews", 0)
-        positive = reviews_data.get("positive_count", 0)
+        avg_rating = reviews_data.get("avg_rating")
 
-        if total > 0:
-            score += (positive / total) * 50
+        if avg_rating is not None:
+            score += (avg_rating / 10) * 50
 
         score += min(total, 25)
 

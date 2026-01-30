@@ -1,4 +1,4 @@
-"""Review fetching, filtering, and segmentation."""
+"""Review fetching, filtering, and aggregation."""
 
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict, cast
@@ -12,24 +12,51 @@ REVIEWS_BATCH_SIZE = 100
 BASE_REVIEW_LANGUAGES = ["ru", "en"]
 
 DEFAULT_MAX_AGE_YEARS = 5
-DEFAULT_REVIEWS_PER_SEGMENT = 30
-DEFAULT_NEUTRAL_THRESHOLD = 7.0
-DEFAULT_NEGATIVE_THRESHOLD = 5.0
+DEFAULT_MAX_REVIEWS = 50
+
+# Mapping for string values in detailed_review
+WIFI_SCORES: dict[str, float] = {
+    "perfect": 10.0,
+    "good": 8.0,
+    "average": 6.0,
+    "poor": 4.0,
+    "bad": 2.0,
+}
+
+HYGIENE_SCORES: dict[str, float] = {
+    "perfect": 10.0,
+    "good": 8.0,
+    "average": 6.0,
+    "poor": 4.0,
+    "bad": 2.0,
+}
+
+
+class DetailedAverages(TypedDict):
+    """Average scores for detailed review categories."""
+
+    cleanness: float | None
+    location: float | None
+    price: float | None
+    services: float | None
+    room: float | None
+    meal: float | None
+    wifi: float | None
+    hygiene: float | None
 
 
 class HotelReviewsFiltered(TypedDict):
-    """Filtered hotel reviews with sentiment segmentation.
+    """Filtered hotel reviews with aggregated ratings.
 
-    Contains reviews split into positive, neutral, and negative segments
-    based on rating thresholds.
+    Contains average rating and detailed category averages computed
+    from all reviews, plus recent reviews filtered by age.
     """
 
     reviews: list[ReviewDict]
     total_reviews: int
     filtered_by_age: int
-    positive_count: int
-    neutral_count: int
-    negative_count: int
+    avg_rating: float | None
+    detailed_averages: DetailedAverages
 
 
 async def batch_get_reviews(
@@ -66,49 +93,92 @@ async def batch_get_reviews(
     return reviews_map
 
 
+def _avg(total: float, count: int) -> float | None:
+    """Calculate average or return None if no data."""
+    return round(total / count, 1) if count else None
+
+
+def _compute_detailed_averages(reviews: list[ReviewDict]) -> DetailedAverages:
+    """Compute average scores for detailed review categories."""
+    fields = ("cleanness", "location", "price", "services", "room", "meal", "wifi", "hygiene")
+    sums: dict[str, float] = dict.fromkeys(fields, 0.0)
+    counts: dict[str, int] = dict.fromkeys(fields, 0)
+
+    for review in reviews:
+        detailed = review.get("detailed_review")
+        if not detailed:
+            continue
+
+        # Numeric fields (0 means not rated)
+        for field in ("cleanness", "location", "price", "services", "room", "meal"):
+            value = detailed.get(field)
+            if isinstance(value, int | float) and value > 0:
+                sums[field] += float(value)
+                counts[field] += 1
+
+        # String fields
+        wifi_str = detailed.get("wifi")
+        if wifi_str and wifi_str in WIFI_SCORES:
+            sums["wifi"] += WIFI_SCORES[wifi_str]
+            counts["wifi"] += 1
+
+        hygiene_str = detailed.get("hygiene")
+        if hygiene_str and hygiene_str in HYGIENE_SCORES:
+            sums["hygiene"] += HYGIENE_SCORES[hygiene_str]
+            counts["hygiene"] += 1
+
+    return {
+        "cleanness": _avg(sums["cleanness"], counts["cleanness"]),
+        "location": _avg(sums["location"], counts["location"]),
+        "price": _avg(sums["price"], counts["price"]),
+        "services": _avg(sums["services"], counts["services"]),
+        "room": _avg(sums["room"], counts["room"]),
+        "meal": _avg(sums["meal"], counts["meal"]),
+        "wifi": _avg(sums["wifi"], counts["wifi"]),
+        "hygiene": _avg(sums["hygiene"], counts["hygiene"]),
+    }
+
+
 def filter_reviews(
     reviews_map: dict[int, list[ReviewDict]],
     max_age_years: int = DEFAULT_MAX_AGE_YEARS,
-    reviews_per_segment: int = DEFAULT_REVIEWS_PER_SEGMENT,
-    neutral_threshold: float = DEFAULT_NEUTRAL_THRESHOLD,
-    negative_threshold: float = DEFAULT_NEGATIVE_THRESHOLD,
+    max_reviews: int = DEFAULT_MAX_REVIEWS,
 ) -> dict[int, HotelReviewsFiltered]:
-    """Filter reviews by date and segment by rating."""
-    cutoff_date = (datetime.now(tz=UTC) - timedelta(days=max_age_years * 365)).isoformat()
+    """Filter reviews: compute averages first, then filter by age.
 
+    1. Compute average rating and detailed averages from ALL reviews
+    2. Filter out reviews older than max_age_years
+    3. Keep up to max_reviews most recent reviews
+    """
     filtered_map: dict[int, HotelReviewsFiltered] = {}
 
     for hid, reviews in reviews_map.items():
         total_reviews = len(reviews)
 
-        valid_reviews = [
-            r for r in reviews
-            if r["created"] >= cutoff_date
-        ]
-        filtered_by_age = total_reviews - len(valid_reviews)
+        # Compute averages from ALL reviews (before filtering)
+        avg_rating = None
+        if reviews:
+            ratings = [r["rating"] for r in reviews if r.get("rating") is not None]
+            if ratings:
+                avg_rating = round(sum(ratings) / len(ratings), 1)
 
-        positive = [r for r in valid_reviews if r["rating"] >= neutral_threshold]
-        neutral = [
-            r for r in valid_reviews
-            if negative_threshold <= r["rating"] < neutral_threshold
-        ]
-        negative = [r for r in valid_reviews if r["rating"] < negative_threshold]
+        detailed_averages = _compute_detailed_averages(reviews)
 
-        positive.sort(key=lambda x: x["created"], reverse=True)
-        neutral.sort(key=lambda x: x["created"], reverse=True)
-        negative.sort(key=lambda x: x["created"], reverse=True)
+        # Filter by age (after computing averages)
+        cutoff_date = (datetime.now(tz=UTC) - timedelta(days=max_age_years * 365)).isoformat()
+        recent_reviews = [r for r in reviews if r["created"] >= cutoff_date]
+        filtered_by_age = total_reviews - len(recent_reviews)
 
-        positive = positive[:reviews_per_segment]
-        neutral = neutral[:reviews_per_segment]
-        negative = negative[:reviews_per_segment]
+        # Sort by date and limit
+        recent_reviews.sort(key=lambda x: x["created"], reverse=True)
+        recent_reviews = recent_reviews[:max_reviews]
 
         filtered_map[hid] = {
-            "reviews": positive + neutral + negative,
+            "reviews": recent_reviews,
             "total_reviews": total_reviews,
             "filtered_by_age": filtered_by_age,
-            "positive_count": len(positive),
-            "neutral_count": len(neutral),
-            "negative_count": len(negative),
+            "avg_rating": avg_rating,
+            "detailed_averages": detailed_averages,
         }
 
     return filtered_map

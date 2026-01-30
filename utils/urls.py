@@ -36,11 +36,18 @@ def ostrovok_url(  # noqa: PLR0913
         f"{co_parts[2]}.{co_parts[1]}.{co_parts[0]}"
     )
 
-    # Calculate total guests
-    total_guests = sum(
-        room.get("adults", 0) + len(room.get("children", []))
-        for room in guests
-    )
+    # Format guests: "{adults}and{child1_age}.{child2_age}..." per room
+    # Multiple rooms separated by comma
+    guests_parts = []
+    for room in guests:
+        adults = room.get("adults", 0)
+        children = room.get("children", [])
+        if children:
+            children_ages = ".".join(str(age) for age in children)
+            guests_parts.append(f"{adults}and{children_ages}")
+        else:
+            guests_parts.append(str(adults))
+    guests_param = ",".join(guests_parts)
 
     base = f"https://ostrovok.ru/hotel/{country_slug}/{city_slug}"
-    return f"{base}/mid{hid}/{hotel_id}/?dates={dates}&guests={total_guests}&q={region_id}"
+    return f"{base}/mid{hid}/{hotel_id}/?dates={dates}&guests={guests_param}&q={region_id}"

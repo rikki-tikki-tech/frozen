@@ -20,6 +20,7 @@ from .hotels import (
 )
 from .reviews import (
     REVIEWS_BATCH_SIZE,
+    DetailedAverages,
     HotelReviewsFiltered,
     batch_get_reviews,
     filter_reviews,
@@ -36,6 +37,7 @@ __all__ = [
     "CONTENT_BATCH_SIZE",
     "REVIEWS_BATCH_SIZE",
     "BatchGetContentResult",
+    "DetailedAverages",
     "HotelFull",
     "HotelReviewsFiltered",
     "HotelScoreDict",
