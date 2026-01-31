@@ -104,9 +104,10 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
             break
 
         payment_types = rate.get("payment_options", {}).get("payment_types", [])
+        meal_data = rate.get("meal_data", {})
+
         price_str = payment_types[0].get("show_amount") if payment_types else None
         currency = payment_types[0].get("show_currency_code", "") if payment_types else ""
-        meal_data = rate.get("meal_data", {})
 
         rate_info = {
             "match_hash": rate.get("match_hash", ""),
@@ -114,14 +115,38 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
             "price": f"{price_str} {currency}" if price_str else None,
             "meal": meal_data.get("value", rate.get("meal", "")),
             "has_breakfast": meal_data.get("has_breakfast", False),
+            "daily_prices": rate.get("daily_prices", []),
+            "room_name_info": rate.get("room_name_info"),
+            "room_data_trans": rate.get("room_data_trans", {}),
+            "rg_ext": rate.get("rg_ext", {}),
+            "amenities_data": rate.get("amenities_data", []),
+            "serp_filters": rate.get("serp_filters", []),
+            "deposit": rate.get("deposit"),
+            "no_show": rate.get("no_show"),
+            "legal_info": rate.get("legal_info"),
+            "allotment": rate.get("allotment"),
+            "any_residency": rate.get("any_residency"),
+            "is_package": rate.get("is_package"),
+            "payment_options": [],
         }
 
         for payment_type in payment_types:
             cancellation_penalties = payment_type.get("cancellation_penalties", {})
             free_cancel = cancellation_penalties.get("free_cancellation_before")
-            if free_cancel:
+            if free_cancel and not rate_info.get("free_cancel_before"):
                 rate_info["free_cancel_before"] = free_cancel[:10]
-                break
+            rate_info["payment_options"].append(
+                {
+                    "type": payment_type.get("type"),
+                    "show_amount": payment_type.get("show_amount"),
+                    "show_currency_code": payment_type.get("show_currency_code"),
+                    "by": payment_type.get("by"),
+                    "is_need_credit_card_data": payment_type.get("is_need_credit_card_data"),
+                    "is_need_cvc": payment_type.get("is_need_cvc"),
+                    "tax_data": payment_type.get("tax_data"),
+                    "cancellation_penalties": cancellation_penalties,
+                }
+            )
 
         rates_info.append(rate_info)
 
@@ -139,6 +164,12 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
             "rating": review.get("rating"),
             "plus": (review.get("review_plus") or "")[:REVIEW_TEXT_MAX_LENGTH],
             "minus": (review.get("review_minus") or "")[:REVIEW_TEXT_MAX_LENGTH],
+            "created": review.get("created"),
+            "traveller_type": review.get("traveller_type"),
+            "trip_type": review.get("trip_type"),
+            "nights": review.get("nights"),
+            "room_name": review.get("room_name"),
+            "language": review.get("_lang"),
         }
         for review in raw_reviews[:MAX_REVIEWS_PER_HOTEL]
     ]
@@ -157,17 +188,66 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         "sample_reviews": reviews_sample,
     }
 
+    room_groups = hotel.get("room_groups", [])
+    room_groups_info = [
+        {
+            "room_group_id": group.get("room_group_id"),
+            "name": group.get("name"),
+            "name_struct": group.get("name_struct"),
+            "room_amenities": group.get("room_amenities"),
+            "rg_ext": group.get("rg_ext"),
+            "images": group.get("images"),
+            "images_ext": group.get("images_ext"),
+        }
+        for group in room_groups
+    ]
+
+    amenity_groups = [
+        {
+            "group_name": group.get("group_name"),
+            "amenities": group.get("amenities", []),
+            "non_free_amenities": group.get("non_free_amenities"),
+        }
+        for group in hotel.get("amenity_groups", [])
+    ]
+
+    images_ext = hotel.get("images_ext", [])
+    images_summary = {
+        "total": len(images_ext),
+        "categories": sorted({image.get("category_slug") for image in images_ext if image}),
+    }
+
     return {
         "hotel_id": hotel.get("id", ""),
         "name": hotel.get("name", ""),
         "stars": hotel.get("star_rating", 0),
         "kind": hotel.get("kind", ""),
         "address": hotel.get("address", ""),
+        "latitude": hotel.get("latitude"),
+        "longitude": hotel.get("longitude"),
+        "region": hotel.get("region", {}),
+        "postal_code": hotel.get("postal_code"),
+        "hotel_chain": hotel.get("hotel_chain"),
+        "is_closed": hotel.get("is_closed"),
+        "deleted": hotel.get("deleted"),
+        "check_in_time": hotel.get("check_in_time"),
+        "check_out_time": hotel.get("check_out_time"),
+        "front_desk_time_start": hotel.get("front_desk_time_start"),
+        "front_desk_time_end": hotel.get("front_desk_time_end"),
         "description": hotel.get("description_struct", ""),
+        "policy": hotel.get("policy_struct", []),
+        "metapolicy": hotel.get("metapolicy_struct", {}),
+        "metapolicy_extra_info": hotel.get("metapolicy_extra_info"),
         "facts": hotel.get("facts", []),
+        "star_certificate": hotel.get("star_certificate", {}),
+        "keys_pickup": hotel.get("keys_pickup", {}),
+        "payment_methods": hotel.get("payment_methods", []),
         "serp_filters": hotel.get("serp_filters", []),
         "rates": rates_info,
         "amenities": amenities[:MAX_AMENITIES_PER_HOTEL],
+        "amenity_groups": amenity_groups,
+        "room_groups": room_groups_info,
+        "images": images_summary,
         "reviews": reviews_data,
     }
 
