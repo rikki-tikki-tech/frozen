@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import httpx
-from google.genai.types import ThinkingLevel
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 from config import SCORING_MODEL
+from services.llm_providers import create_agent, estimate_tokens
 
 if TYPE_CHECKING:
     from etg import GuestRoom
@@ -91,56 +89,9 @@ def _get_default_model() -> str:
     return SCORING_MODEL
 
 
-def _is_anthropic_model(model_name: str) -> bool:
-    return model_name.startswith("claude-")
-
-
-def estimate_tokens(text: str, model_name: str | None = None) -> int:
-    """Estimate token count for text.
-
-    Uses character-based estimation calibrated per model family:
-    - Gemini: ~4 characters per token (Google documentation)
-    - Claude: ~3.5 characters per token (Anthropic documentation)
-
-    Args:
-        text: Text to count tokens for.
-        model_name: Optional model name for calibrated estimation.
-
-    Returns:
-        Estimated token count.
-    """
-    if model_name is None:
-        model_name = _get_default_model()
-
-    # Calibrated estimation per model family
-    if _is_anthropic_model(model_name):
-        # Claude: ~3.5 chars per token
-        return int(len(text) / 3.5)
-
-    # Gemini: ~4 chars per token (per Google docs)
-    return len(text) // 4
-
-
 def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]:
-    """Create scoring agent with specified model (Gemini or Claude)."""
-    if model_name is None:
-        model_name = _get_default_model()
-
-    if _is_anthropic_model(model_name):
-        anthropic_settings = AnthropicModelSettings(temperature=0.2, timeout=300.0)
-        anthropic_model = AnthropicModel(model_name)
-        agent = Agent(
-            anthropic_model, output_type=ScoringResponse, model_settings=anthropic_settings
-        )
-        return cast("Agent[None, ScoringResponse]", cast("object", agent))
-
-    google_settings = GoogleModelSettings(
-        temperature=0.2,
-        google_thinking_config={"thinking_level": ThinkingLevel.MEDIUM},
-    )
-    google_model = GoogleModel(model_name)
-    agent = Agent(google_model, output_type=ScoringResponse, model_settings=google_settings)
-    return cast("Agent[None, ScoringResponse]", cast("object", agent))
+    """Create scoring agent with specified model."""
+    return create_agent(model_name or _get_default_model(), ScoringResponse)
 
 
 def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
