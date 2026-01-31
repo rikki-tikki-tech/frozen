@@ -1,6 +1,6 @@
 """Utility functions."""
 
-from .sse import sse_event
+from .sse import SSEMessage, sse_event
 from .urls import ostrovok_url
 
-__all__ = ["ostrovok_url", "sse_event"]
+__all__ = ["ostrovok_url", "sse_event", "SSEMessage"]
