@@ -40,7 +40,7 @@ DEFAULT_PREFERENCES = "Лучшее соотношение цены и каче�
 PRESORT_LIMIT = 100
 
 
-async def search_stream(
+async def search_stream(  # noqa: PLR0915
     request: HotelSearchRequest,
     etg_client: ETGClient,
 ) -> AsyncIterator[str]:
@@ -96,6 +96,11 @@ async def search_stream(
             total_after_filter=total_after_filter,
             sampled=sampled,
         ))
+
+        # Early exit if no hotels found
+        if not hotels:
+            yield sse_event(DoneEvent(total_scored=0, hotels=[]))
+            return
 
         # Phase 2: Fetch content
         hids = [h["hid"] for h in hotels]
