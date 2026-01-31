@@ -70,6 +70,8 @@ def _load_scoring_prompt() -> str:
     prompt_path = Path(__file__).parent.parent / "prompts" / "hotel_scoring.md"
     return prompt_path.read_text(encoding="utf-8")
 
+SCORING_PROMPT_TEMPLATE = _load_scoring_prompt()
+
 TOP_HOTELS_COUNT = 10
 DEFAULT_RETRIES = 3
 
@@ -208,8 +210,7 @@ def _build_prompt(  # noqa: PLR0913
     top_count: int,
 ) -> str:
     """Build scoring prompt for hotels."""
-    prompt_template = _load_scoring_prompt()
-    return prompt_template.format(
+    return SCORING_PROMPT_TEMPLATE.format(
         guests_info=_format_guests_info(guests),
         price_range=_format_price_range(min_price, max_price, currency),
         user_preferences=user_preferences,
