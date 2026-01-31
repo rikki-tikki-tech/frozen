@@ -45,11 +45,11 @@ class DetailedAverages(TypedDict):
     hygiene: float | None
 
 
-class HotelReviewsFiltered(TypedDict):
-    """Filtered hotel reviews with aggregated ratings.
+class HotelReviews(TypedDict):
+    """Hotel reviews with aggregated ratings and optional filtering stats.
 
     Contains average rating and detailed category averages computed
-    from all reviews, plus recent reviews filtered by age.
+    from ALL reviews, plus review list (filtered or unfiltered) and stats.
     """
 
     reviews: list[ReviewDict]
@@ -63,8 +63,12 @@ async def batch_get_reviews(
     client: ETGClient,
     hids: list[int],
     language: str,
-) -> dict[int, list[ReviewDict]]:
-    """Fetch reviews for hotels in multiple languages."""
+) -> dict[int, HotelReviews]:
+    """Fetch reviews for hotels in multiple languages and compute aggregated ratings.
+
+    Returns reviews with avg_rating and detailed_averages computed from ALL reviews.
+    filtered_by_age is set to 0 (no filtering applied yet).
+    """
     languages = BASE_REVIEW_LANGUAGES.copy()
     if language not in languages:
         languages.append(language)
@@ -90,12 +94,44 @@ async def batch_get_reviews(
         except ETGAPIError:
             continue
 
-    return reviews_map
+    # Compute ratings for each hotel
+    result: dict[int, HotelReviews] = {}
+    for hid, reviews in reviews_map.items():
+        avg_rating, detailed_averages = _compute_ratings(reviews)
+
+        result[hid] = {
+            "reviews": reviews,
+            "total_reviews": len(reviews),
+            "filtered_by_age": 0,  # No filtering applied yet
+            "avg_rating": avg_rating,
+            "detailed_averages": detailed_averages,
+        }
+
+    return result
 
 
 def _avg(total: float, count: int) -> float | None:
     """Calculate average or return None if no data."""
     return round(total / count, 1) if count else None
+
+
+def _compute_ratings(reviews: list[ReviewDict]) -> tuple[float | None, DetailedAverages]:
+    """Compute avg_rating and detailed_averages from reviews.
+
+    Args:
+        reviews: List of review dictionaries.
+
+    Returns:
+        Tuple of (avg_rating, detailed_averages).
+    """
+    avg_rating = None
+    if reviews:
+        ratings = [r["rating"] for r in reviews if r.get("rating") is not None]
+        if ratings:
+            avg_rating = round(sum(ratings) / len(ratings), 1)
+
+    detailed_averages = _compute_detailed_averages(reviews)
+    return avg_rating, detailed_averages
 
 
 def _compute_detailed_averages(reviews: list[ReviewDict]) -> DetailedAverages:
@@ -140,31 +176,25 @@ def _compute_detailed_averages(reviews: list[ReviewDict]) -> DetailedAverages:
 
 
 def filter_reviews(
-    reviews_map: dict[int, list[ReviewDict]],
+    reviews_map: dict[int, HotelReviews],
     max_age_years: int = DEFAULT_MAX_AGE_YEARS,
     max_reviews: int = DEFAULT_MAX_REVIEWS,
-) -> dict[int, HotelReviewsFiltered]:
-    """Filter reviews: compute averages first, then filter by age.
+) -> dict[int, HotelReviews]:
+    """Filter reviews by age and limit count.
 
-    1. Compute average rating and detailed averages from ALL reviews
-    2. Filter out reviews older than max_age_years
-    3. Keep up to max_reviews most recent reviews
+    Takes reviews with pre-computed ratings and filters them:
+    1. Filter out reviews older than max_age_years
+    2. Keep up to max_reviews most recent reviews
+    3. Preserve avg_rating and detailed_averages from original data
+    4. Update filtered_by_age counter
     """
-    filtered_map: dict[int, HotelReviewsFiltered] = {}
+    filtered_map: dict[int, HotelReviews] = {}
 
-    for hid, reviews in reviews_map.items():
-        total_reviews = len(reviews)
+    for hid, raw_data in reviews_map.items():
+        reviews = raw_data["reviews"]
+        total_reviews = raw_data["total_reviews"]
 
-        # Compute averages from ALL reviews (before filtering)
-        avg_rating = None
-        if reviews:
-            ratings = [r["rating"] for r in reviews if r.get("rating") is not None]
-            if ratings:
-                avg_rating = round(sum(ratings) / len(ratings), 1)
-
-        detailed_averages = _compute_detailed_averages(reviews)
-
-        # Filter by age (after computing averages)
+        # Filter by age
         cutoff_date = (datetime.now(tz=UTC) - timedelta(days=max_age_years * 365)).isoformat()
         recent_reviews = [r for r in reviews if r["created"] >= cutoff_date]
         filtered_by_age = total_reviews - len(recent_reviews)
@@ -177,8 +207,8 @@ def filter_reviews(
             "reviews": recent_reviews,
             "total_reviews": total_reviews,
             "filtered_by_age": filtered_by_age,
-            "avg_rating": avg_rating,
-            "detailed_averages": detailed_averages,
+            "avg_rating": raw_data["avg_rating"],
+            "detailed_averages": raw_data["detailed_averages"],
         }
 
     return filtered_map

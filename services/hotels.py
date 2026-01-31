@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from etg import ETGClient, GuestRoom, Hotel, HotelContent, HotelKind, HotelRate
 
 if TYPE_CHECKING:
-    from .reviews import HotelReviewsFiltered
+    from .reviews import HotelReviews
     from .scoring import HotelScoreDict
 
 CONTENT_BATCH_SIZE = 100
@@ -49,7 +49,7 @@ class HotelFull(HotelContent):
     """
 
     rates: list[HotelRate]
-    reviews: HotelReviewsFiltered
+    reviews: HotelReviews
 
 
 class HotelScored(HotelFull):
@@ -68,7 +68,7 @@ class HotelScored(HotelFull):
 def combine_hotels_data(
     hotels: list[Hotel],
     content_map: dict[int, HotelContent],
-    reviews_map: dict[int, HotelReviewsFiltered],
+    reviews_map: dict[int, HotelReviews],
 ) -> list[HotelFull]:
     """Combine hotel search results with content and reviews.
 
@@ -80,7 +80,7 @@ def combine_hotels_data(
     Returns:
         List of combined hotel data.
     """
-    empty_reviews: HotelReviewsFiltered = {
+    empty_reviews: HotelReviews = {
         "reviews": [],
         "total_reviews": 0,
         "filtered_by_age": 0,
@@ -361,7 +361,7 @@ async def batch_get_content(
 
 
 def calculate_prescore(
-    hotel: HotelFull, reviews_data: HotelReviewsFiltered | None = None,
+    hotel: HotelFull, reviews_data: HotelReviews | None = None,
 ) -> float:
     """Calculate quick pre-score for sorting before LLM.
 
@@ -410,7 +410,7 @@ class _ScoredHotel(TypedDict):
 
 def presort_hotels(
     hotels: list[HotelFull],
-    reviews_map: dict[int, HotelReviewsFiltered],
+    reviews_map: dict[int, HotelReviews],
     limit: int = 100,
 ) -> list[HotelFull]:
     """Sort hotels by kind tier and pre-score, return top N.

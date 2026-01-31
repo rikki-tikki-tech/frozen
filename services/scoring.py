@@ -66,6 +66,7 @@ class ScoringResultDict(TypedDict):
 # Configuration
 # =============================================================================
 
+# ruff: noqa: E501, W291
 SCORING_PROMPT = """\
 You are an expert Hotel Recommendation Engine specializing in "Value for Money" analysis.
 
