@@ -150,9 +150,9 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         if len(rates_info) >= MAX_RATES_PER_HOTEL:
             break
 
-        pt = rate.get("payment_options", {}).get("payment_types", [])
-        price_str = pt[0].get("show_amount") if pt else None
-        currency = pt[0].get("show_currency_code", "") if pt else ""
+        payment_types = rate.get("payment_options", {}).get("payment_types", [])
+        price_str = payment_types[0].get("show_amount") if payment_types else None
+        currency = payment_types[0].get("show_currency_code", "") if payment_types else ""
         meal_data = rate.get("meal_data", {})
 
         rate_info = {
@@ -163,9 +163,9 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
             "has_breakfast": meal_data.get("has_breakfast", False),
         }
 
-        for p in pt:
-            cp = p.get("cancellation_penalties", {})
-            free_cancel = cp.get("free_cancellation_before")
+        for payment_type in payment_types:
+            cancellation_penalties = payment_type.get("cancellation_penalties", {})
+            free_cancel = cancellation_penalties.get("free_cancellation_before")
             if free_cancel:
                 rate_info["free_cancel_before"] = free_cancel[:10]
                 break
@@ -173,28 +173,34 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         rates_info.append(rate_info)
 
     amenities = [
-        a
-        for g in hotel.get("amenity_groups", [])
-        for a in g.get("amenities", [])
+        amenity
+        for group in hotel.get("amenity_groups", [])
+        for amenity in group.get("amenities", [])
     ]
 
-    hr = hotel.get("reviews", {})
-    raw_reviews = hr.get("reviews", []) if isinstance(hr, dict) else []
+    hotel_reviews = hotel.get("reviews", {})
+    raw_reviews = hotel_reviews.get("reviews", []) if isinstance(hotel_reviews, dict) else []
     reviews_sample = [
         {
-            "id": r.get("id"),
-            "rating": r.get("rating"),
-            "plus": (r.get("review_plus") or "")[:REVIEW_TEXT_MAX_LENGTH],
-            "minus": (r.get("review_minus") or "")[:REVIEW_TEXT_MAX_LENGTH],
+            "id": review.get("id"),
+            "rating": review.get("rating"),
+            "plus": (review.get("review_plus") or "")[:REVIEW_TEXT_MAX_LENGTH],
+            "minus": (review.get("review_minus") or "")[:REVIEW_TEXT_MAX_LENGTH],
         }
-        for r in raw_reviews[:MAX_REVIEWS_PER_HOTEL]
+        for review in raw_reviews[:MAX_REVIEWS_PER_HOTEL]
     ]
 
     # Add aggregated review statistics
     reviews_data = {
-        "total_reviews": hr.get("total_reviews", 0) if isinstance(hr, dict) else 0,
-        "avg_rating": hr.get("avg_rating") if isinstance(hr, dict) else None,
-        "detailed_averages": hr.get("detailed_averages", {}) if isinstance(hr, dict) else {},
+        "total_reviews": (
+            hotel_reviews.get("total_reviews", 0) if isinstance(hotel_reviews, dict) else 0
+        ),
+        "avg_rating": (
+            hotel_reviews.get("avg_rating") if isinstance(hotel_reviews, dict) else None
+        ),
+        "detailed_averages": (
+            hotel_reviews.get("detailed_averages", {}) if isinstance(hotel_reviews, dict) else {}
+        ),
         "sample_reviews": reviews_sample,
     }
 
