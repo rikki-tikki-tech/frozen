@@ -27,6 +27,10 @@ def create_app() -> FastAPI:
 
     etg_client = ETGClient(ETG_KEY_ID, ETG_API_KEY, timeout=ETG_REQUEST_TIMEOUT)
 
+    @app.on_event("shutdown")
+    async def shutdown_event() -> None:
+        await etg_client.close()
+
     @app.get("/")
     async def root() -> dict[str, Any]:
         return {"message": "Hello World"}
