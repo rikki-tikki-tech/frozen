@@ -140,17 +140,10 @@ prompts/             — LLM промпты
 
 ### Быстрый старт
 
-1. Настройте `GCP_PROJECT` в начале `deploy.sh`:
-   ```bash
-   GCP_PROJECT="your-project-id"
-   GCP_ZONE="us-central1-a"
-   VM_NAME="frozen-server"
-   ```
-
-2. Запустите деплой:
-   ```bash
-   ./deploy.sh
-   ```
+Запустите деплой:
+```bash
+./deploy.sh
+```
 
 Скрипт выполняет:
 - Синхронизацию кода на VM (исключая .git, .venv, *.ipynb)
