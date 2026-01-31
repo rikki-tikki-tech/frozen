@@ -106,7 +106,9 @@ curl -X POST http://localhost:8000/hotels/search/stream \
 ```
 main.py              — точка входа (uvicorn)
 config.py            — конфигурация из переменных окружения
-search_hotels.ipynb     — Jupyter notebook для исследования и отладки
+search_hotels.ipynb  — Jupyter notebook для исследования и отладки
+deploy.sh            — скрипт деплоя на GCP VM
+frozen-api.service   — systemd unit файл для демона
 
 etg/                 — ETG API клиент
   types.py           — типы данных (GuestRoom, Hotel, HotelContent, Review...)
@@ -127,4 +129,33 @@ api/                 — FastAPI слой
 utils/               — утилиты
   formatting.py      — форматирование дат и гостей
   sse.py             — сериализация SSE-событий
+
+prompts/             — LLM промпты
+  hotel_scoring.md   — промпт для скоринга отелей
 ```
+
+## Деплой на GCP
+
+Проект разворачивается на GCP VM (`frozen-server`) с помощью systemd service.
+
+### Быстрый старт
+
+1. Настройте `GCP_PROJECT` в начале `deploy.sh`:
+   ```bash
+   GCP_PROJECT="your-project-id"
+   GCP_ZONE="us-central1-a"
+   VM_NAME="frozen-server"
+   ```
+
+2. Запустите деплой:
+   ```bash
+   ./deploy.sh
+   ```
+
+Скрипт выполняет:
+- Синхронизацию кода на VM (исключая .git, .venv, *.ipynb)
+- Установку зависимостей через `uv sync --frozen`
+- Обновление systemd unit файла
+- Перезапуск только `frozen-api` сервиса (другие процессы на VM не затрагиваются)
+
+После деплоя выводятся полезные команды для логов, перезапуска и SSH.

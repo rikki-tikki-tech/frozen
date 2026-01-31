@@ -1,0 +1,18 @@
+[Unit]
+Description=Frozen Hotel Search API
+After=network.target
+
+[Service]
+Type=simple
+User=utrobin_serbia_gmail_com
+WorkingDirectory=/home/utrobin_serbia_gmail_com/frozen
+Environment="PATH=/home/utrobin_serbia_gmail_com/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Restart=always
+RestartSec=10
+ExecStart=/home/utrobin_serbia_gmail_com/.local/bin/uv run uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -30,8 +30,10 @@ No tests yet.
 ## Architecture
 
 ```
-main.py           → entry point, creates FastAPI app
-config.py         → loads .env (ETG_KEY_ID, ETG_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, SCORING_MODEL)
+main.py              → entry point, creates FastAPI app
+config.py            → loads .env (ETG_KEY_ID, ETG_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, SCORING_MODEL)
+deploy.sh            → GCP deployment script (gcloud compute scp + systemd restart)
+frozen-api.service   → systemd unit file for daemon
 
 etg/              → ETG API client
   types.py        → TypedDict: GuestRoom, Hotel, HotelContent, HotelReviews, Review, Region, SearchResults
@@ -51,6 +53,9 @@ api/              → FastAPI layer
 
 utils/            → utility functions
   sse.py          → sse_event() — SSE serialization
+
+prompts/          → LLM prompts
+  hotel_scoring.md → scoring prompt loaded by services/scoring.py
 
 search_hotels.ipynb  → Jupyter notebook for research, uses the same modules
 ```
@@ -151,3 +156,20 @@ Practices:
 - **ETG API** (`https://api.worldota.net`) — hotel search, content, reviews. Basic Auth.
 - **Google Gemini** (`gemini-3-flash-preview`) — LLM scoring. Temperature 0.2, thinking LOW.
 - **Anthropic Claude** (`claude-haiku-4-5`) — alternative LLM for scoring. Temperature 0.2.
+
+## Deployment
+
+Deployment to GCP VM `frozen-server` via single `deploy.sh` script:
+
+```bash
+# Configure GCP_PROJECT in deploy.sh, then:
+./deploy.sh
+```
+
+Process:
+1. Sync code with `gcloud compute scp` (excludes .git, .venv, *.ipynb)
+2. Install deps with `uv sync --frozen`
+3. Update systemd unit file
+4. Restart only `frozen-api` service (other VM processes untouched)
+
+The VM may run other services — deployment is careful and isolated.
