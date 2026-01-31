@@ -251,7 +251,6 @@ After evaluating all provided hotels:
 
 TOP_HOTELS_COUNT = 10
 DEFAULT_RETRIES = 3
-CHARS_PER_TOKEN = 3
 
 MAX_RATES_PER_HOTEL = 3
 MAX_REVIEWS_PER_HOTEL = 5
@@ -273,9 +272,30 @@ def _is_anthropic_model(model_name: str) -> bool:
     return model_name.startswith("claude-")
 
 
-def estimate_tokens(text: str) -> int:
-    """Estimate token count for text (rough approximation)."""
-    return len(text) // CHARS_PER_TOKEN
+def estimate_tokens(text: str, model_name: str | None = None) -> int:
+    """Estimate token count for text.
+
+    Uses character-based estimation calibrated per model family:
+    - Gemini: ~4 characters per token (Google documentation)
+    - Claude: ~3.5 characters per token (Anthropic documentation)
+
+    Args:
+        text: Text to count tokens for.
+        model_name: Optional model name for calibrated estimation.
+
+    Returns:
+        Estimated token count.
+    """
+    if model_name is None:
+        model_name = _get_default_model()
+
+    # Calibrated estimation per model family
+    if _is_anthropic_model(model_name):
+        # Claude: ~3.5 chars per token
+        return int(len(text) / 3.5)
+
+    # Gemini: ~4 chars per token (per Google docs)
+    return len(text) // 4
 
 
 def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]:
@@ -452,14 +472,16 @@ async def score_hotels(  # noqa: PLR0913
     Returns:
         ScoringResultDict with results, summary, error, and token estimate.
     """
-    agent = _create_agent(model_name)
+    # Resolve model name for tokenizer and agent
+    resolved_model = model_name or _get_default_model()
+    agent = _create_agent(resolved_model)
     top_count = min(top_count, len(hotels))
 
     hotels_for_llm = [prepare_hotel_for_llm(h) for h in hotels]
     prompt = _build_prompt(
         hotels_for_llm, user_preferences, guests, min_price, max_price, currency, top_count
     )
-    estimated_tokens = estimate_tokens(prompt)
+    estimated_tokens = estimate_tokens(prompt, resolved_model)
 
     last_error: str | None = None
 

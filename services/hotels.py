@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from etg import ETGClient, GuestRoom, Hotel, HotelContent, HotelKind, HotelRate
+from etg import ETGAPIError, ETGClient, GuestRoom, Hotel, HotelContent, HotelKind, HotelRate
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .reviews import HotelReviews
@@ -345,12 +348,32 @@ async def batch_get_content(
     content_map: dict[int, HotelContent] = {}
     total = len(hids)
     total_batches = (total + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
+    failed_batches = 0
 
-    for i in range(0, total, CONTENT_BATCH_SIZE):
+    for batch_num, i in enumerate(range(0, total, CONTENT_BATCH_SIZE), start=1):
         batch = hids[i : i + CONTENT_BATCH_SIZE]
-        content = await client.get_hotel_content(hids=batch, language=language)
-        for hotel in content:
-            content_map[hotel["hid"]] = hotel
+        try:
+            content = await client.get_hotel_content(hids=batch, language=language)
+            for hotel in content:
+                content_map[hotel["hid"]] = hotel
+        except ETGAPIError as e:
+            failed_batches += 1
+            logger.warning(
+                "Content batch %d/%d failed: %s",
+                batch_num,
+                total_batches,
+                e,
+            )
+            continue
+
+    if failed_batches > 0:
+        logger.warning(
+            "Content fetching: %d/%d batches failed, loaded %d/%d hotels",
+            failed_batches,
+            total_batches,
+            len(content_map),
+            total,
+        )
 
     return {
         "content": content_map,
@@ -448,6 +471,28 @@ def presort_hotels(
     return result
 
 
+def _get_valid_rate_hash(hotel: HotelFull, selected_hash: str) -> str:
+    """Validate selected_rate_hash and fallback to first rate if invalid.
+
+    Args:
+        hotel: Hotel data with rates.
+        selected_hash: Hash returned by LLM.
+
+    Returns:
+        Valid rate hash (selected if valid, otherwise first available).
+    """
+    rates = hotel.get("rates", [])
+    if not rates:
+        return selected_hash  # No rates to validate against
+
+    valid_hashes = {rate.get("match_hash", "") for rate in rates}
+    if selected_hash in valid_hashes:
+        return selected_hash
+
+    # Fallback to first rate's hash
+    return rates[0].get("match_hash", selected_hash)
+
+
 def finalize_scored_hotels(
     hotels: list[HotelFull],
     scoring_results: list[HotelScoreDict],
@@ -456,6 +501,9 @@ def finalize_scored_hotels(
 
     Returns hotels in the order from scoring_results (sorted by score desc),
     with hotel data merged from hotels list.
+
+    Validates selected_rate_hash against hotel's available rates.
+    If LLM returned invalid hash, falls back to first rate.
 
     Args:
         hotels: List of hotel data with content and reviews.
@@ -473,12 +521,15 @@ def finalize_scored_hotels(
         if hotel is None:
             continue
 
+        # Validate and potentially fix the rate hash
+        valid_hash = _get_valid_rate_hash(hotel, score_data["selected_rate_hash"])
+
         scored_hotel: dict[str, Any] = {
             **hotel,
             "score": score_data["score"],
             "top_reasons": score_data["top_reasons"],
             "score_penalties": score_data["score_penalties"],
-            "selected_rate_hash": score_data["selected_rate_hash"],
+            "selected_rate_hash": valid_hash,
         }
         result.append(cast("HotelScored", scored_hotel))
 

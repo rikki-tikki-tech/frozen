@@ -1,9 +1,12 @@
 """Review fetching, filtering, and aggregation."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict, cast
 
 from etg import ETGAPIError, ETGClient
+
+logger = logging.getLogger(__name__)
 
 # Type alias for review dict (API data + custom fields)
 ReviewDict = dict[str, Any]
@@ -74,6 +77,7 @@ async def batch_get_reviews(
         languages.append(language)
 
     reviews_map: dict[int, list[ReviewDict]] = {}
+    failed_languages: list[str] = []
 
     for lang in languages:
         try:
@@ -91,8 +95,17 @@ async def batch_get_reviews(
                     if hid not in reviews_map:
                         reviews_map[hid] = []
                     reviews_map[hid].extend(reviews_list)
-        except ETGAPIError:
+        except ETGAPIError as e:
+            failed_languages.append(lang)
+            logger.warning("Reviews fetch failed for language '%s': %s", lang, e)
             continue
+
+    if failed_languages:
+        logger.warning(
+            "Reviews fetching: languages %s failed, got reviews for %d hotels",
+            failed_languages,
+            len(reviews_map),
+        )
 
     # Compute ratings for each hotel
     result: dict[int, HotelReviews] = {}
