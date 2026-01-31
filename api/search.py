@@ -12,12 +12,12 @@ from services import (
     batch_get_content,
     batch_get_reviews,
     combine_hotels_data,
+    filter_hotels_by_price,
     filter_reviews,
     finalize_scored_hotels,
     presort_hotels,
     sample_hotels,
     score_hotels,
-    search_hotels,
 )
 from utils import sse_event
 
@@ -72,8 +72,8 @@ async def search_stream(  # noqa: PLR0915
             user_preferences=user_preferences,
         ))
 
-        search_result = await search_hotels(
-            client=etg_client,
+        # Search hotels in region
+        search_results = await etg_client.search_hotels_by_region(
             region_id=region_id,
             checkin=checkin.isoformat(),
             checkout=checkout.isoformat(),
@@ -82,13 +82,17 @@ async def search_stream(  # noqa: PLR0915
             currency=currency,
             language=language,
             hotels_limit=request.hotels_limit,
-            min_price=min_price_per_night,
-            max_price=max_price_per_night,
         )
-        total_available = search_result["total_available"]
-        total_after_filter = search_result["total_after_filter"]
+        all_hotels = search_results.get("hotels", [])
+        total_available = search_results.get("total_hotels", len(all_hotels))
 
-        sample_result = sample_hotels(search_result["hotels"])
+        # Filter by price
+        filtered_hotels = filter_hotels_by_price(
+            all_hotels, min_price_per_night, max_price_per_night
+        )
+        total_after_filter = len(filtered_hotels)
+
+        sample_result = sample_hotels(filtered_hotels)
         hotels = sample_result["hotels"]
         sampled = sample_result["sampled"]
         yield sse_event(HotelSearchDoneEvent(
@@ -109,10 +113,10 @@ async def search_stream(  # noqa: PLR0915
             total_hotels=len(hids),
             total_batches=total_batches,
         ))
-        content_result = await batch_get_content(etg_client, hids, language)
+        content_map = await batch_get_content(etg_client, hids, language)
         yield sse_event(BatchGetContentDoneEvent(
-            hotels_with_content=content_result["total_loaded"],
-            total_hotels=content_result["total_requested"],
+            hotels_with_content=len(content_map),
+            total_hotels=len(hids),
         ))
 
         # Phase 3: Fetch reviews
@@ -129,7 +133,7 @@ async def search_stream(  # noqa: PLR0915
         ))
 
         # Phase 4: Presort
-        combined = combine_hotels_data(hotels, content_result["content"], reviews_map)
+        combined = combine_hotels_data(hotels, content_map, reviews_map)
         top_hotels = presort_hotels(combined, reviews_map, limit=PRESORT_LIMIT)
 
         yield sse_event(PresortDoneEvent(

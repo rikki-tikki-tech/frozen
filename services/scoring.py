@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import httpx
 from google.genai.types import ThinkingLevel
@@ -33,7 +33,7 @@ class HotelScoreDict(TypedDict):
     score: int
     top_reasons: list[str]
     score_penalties: list[str]
-    selected_rate_hash: str
+    selected_rate_hash: str | None
 
 
 class HotelScore(BaseModel):
@@ -43,7 +43,7 @@ class HotelScore(BaseModel):
     score: int
     top_reasons: list[str]
     score_penalties: list[str]
-    selected_rate_hash: str
+    selected_rate_hash: str | None
 
 
 class ScoringResponse(BaseModel):
@@ -115,7 +115,7 @@ Generate the response based on the provided schema. Follow these specific instru
 ### `hotel_id` (string)
 The unique identifier of the hotel from the input data.
 
-### `selected_rate_hash` (string) - MANDATORY FIELD
+### `selected_rate_hash` (string | null) - MANDATORY FIELD
 **CRITICAL REQUIREMENT:** Each hotel has a `rates` array. Each rate has a `match_hash` field.
 
 **Your task:**
@@ -128,18 +128,10 @@ The unique identifier of the hotel from the input data.
    - **Value:** Balance price with amenities (slightly pricier with breakfast may be better value)
 
 **CRITICAL:** Copy the EXACT `match_hash` string from the selected rate. Do NOT make up or modify this value.
+**If no suitable rate exists or rates array is empty, return `null`.**
 
-**Example input:**
-```json
-{{
-  "hotel_id": "example_hotel",
-  "rates": [
-    {{"match_hash": "abc123", "room": "Standard", "price": "5000 RUB", "meal": "nomeal"}},
-    {{"match_hash": "xyz789", "room": "Family Suite", "price": "8000 RUB", "meal": "breakfast", "has_breakfast": true}}
-  ]
-}}
-```
 **Example output for this hotel:** `"selected_rate_hash": "xyz789"` (if family suite with breakfast is better for user)
+**If no rates available:** `"selected_rate_hash": null`
 
 ### `score` (integer 0-100)
 - **90-100:** Tier 1/2, High Stars, **Guest Rating 9.0+**, Great Price.
@@ -226,26 +218,9 @@ After evaluating all provided hotels:
 4. **Output format (strict):**
    The final output **MUST fully comply** with the required **JSON schema structure**.
 
-**RESPONSE FORMAT EXAMPLE:**
-```json
-{{
-  "results": [
-    {{
-      "hotel_id": "example_hotel_1",
-      "selected_rate_hash": "abc123xyz",
-      "score": 95,
-      "top_reasons": ["Reason 1", "Reason 2", "Reason 3"],
-      "score_penalties": ["Penalty 1"]
-    }},
-    ...exactly {top_count} hotels total
-  ],
-  "summary": "Market overview and selection rationale..."
-}}
-```
-
 **REMINDER:**
 - The output must include exactly {top_count} hotel objects in the `results` array
-- EVERY hotel object MUST have `selected_rate_hash` copied from one of its rates
+- EVERY hotel object MUST have `selected_rate_hash` (copied from one of its rates, or null if no suitable rates)
 - Always fill the full quota of {top_count} hotels
 """
 
@@ -306,16 +281,18 @@ def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]
     if _is_anthropic_model(model_name):
         anthropic_settings = AnthropicModelSettings(temperature=0.2, timeout=300.0)
         anthropic_model = AnthropicModel(model_name)
-        return Agent(
+        agent = Agent(
             anthropic_model, output_type=ScoringResponse, model_settings=anthropic_settings
         )
+        return cast("Agent[None, ScoringResponse]", cast("object", agent))
 
     google_settings = GoogleModelSettings(
         temperature=0.2,
         google_thinking_config={"thinking_level": ThinkingLevel.MEDIUM},
     )
     google_model = GoogleModel(model_name)
-    return Agent(google_model, output_type=ScoringResponse, model_settings=google_settings)
+    agent = Agent(google_model, output_type=ScoringResponse, model_settings=google_settings)
+    return cast("Agent[None, ScoringResponse]", cast("object", agent))
 
 
 def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
