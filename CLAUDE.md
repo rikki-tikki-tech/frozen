@@ -65,6 +65,29 @@ etg_hotels.ipynb  → Jupyter notebook for research, uses the same modules
 - **Batched LLM scoring** — 25 hotels per request, with retry logic.
 - **LLM selection via config** — `SCORING_MODEL` in .env: `gemini-3-flash-preview` or `claude-haiku-4-5`.
 
+## Type System
+
+Project uses **hybrid approach**: TypedDict for data, Pydantic for validation/serialization.
+
+| Layer | Technology | Count | Reason |
+|-------|------------|-------|--------|
+| ETG API responses | TypedDict | ~54 types | Zero-cost JSON typing |
+| Internal services | TypedDict | ~10 types | Composition without overhead |
+| API requests | Pydantic | 3 models | Input validation |
+| SSE events | Pydantic | 14 models | JSON serialization |
+| LLM responses | Pydantic | 2 models | Parsing and validation |
+
+**When to use TypedDict:**
+- Data from external APIs (already dict from JSON)
+- Internal data structures passed between services
+- Deep nesting with many optional fields
+- Performance-critical streaming of many objects
+
+**When to use Pydantic:**
+- API request validation (automatic error messages, OpenAPI docs)
+- Serialization to JSON for responses/SSE
+- Parsing untrusted input (LLM responses)
+
 ## Code Style
 
 - Python 3.13+, uses union types (`str | None`), generic syntax.
