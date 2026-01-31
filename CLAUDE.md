@@ -52,7 +52,7 @@ api/              → FastAPI layer
 utils/            → utility functions
   sse.py          → sse_event() — SSE serialization
 
-etg_hotels.ipynb  → Jupyter notebook for research, uses the same modules
+search_hotels.ipynb  → Jupyter notebook for research, uses the same modules
 ```
 
 ## Key Decisions

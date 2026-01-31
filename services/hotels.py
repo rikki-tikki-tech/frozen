@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 import random
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from etg import ETGAPIError, ETGClient, GuestRoom, Hotel, HotelContent, HotelKind, HotelRate
-
-logger = logging.getLogger(__name__)
+from etg import ETGAPIError, ETGClient, Hotel, HotelContent, HotelKind, HotelRate
 
 if TYPE_CHECKING:
     from .reviews import HotelReviews
@@ -65,7 +62,7 @@ class HotelScored(HotelFull):
     score: int
     top_reasons: list[str]
     score_penalties: list[str]
-    selected_rate_hash: str
+    selected_rate_hash: str | None
 
 
 def combine_hotels_data(
@@ -86,7 +83,6 @@ def combine_hotels_data(
     empty_reviews: HotelReviews = {
         "reviews": [],
         "total_reviews": 0,
-        "filtered_by_age": 0,
         "avg_rating": None,
         "detailed_averages": {
             "cleanness": None,
@@ -164,7 +160,7 @@ def _parse_daily_prices(daily_prices: list[str]) -> list[float]:
     return prices
 
 
-def get_hotel_price(hotel: Hotel) -> float | None:
+def get_hotel_price_per_night(hotel: Hotel) -> float | None:
     """Extract average price per night from cheapest rate's daily_prices.
 
     Args:
@@ -198,11 +194,6 @@ def get_hotel_price(hotel: Hotel) -> float | None:
     return sum(prices) / len(prices)
 
 
-def get_hotel_price_per_night(hotel: Hotel) -> float | None:
-    """Extract average price per night from cheapest rate."""
-    return get_hotel_price(hotel)
-
-
 def filter_hotels_by_price(
     hotels: list[Hotel],
     min_price_per_night: float | None = None,
@@ -227,14 +218,6 @@ def filter_hotels_by_price(
 
 
 MAX_HOTELS_FOR_ANALYSIS = 500
-
-
-class SearchHotelsResult(TypedDict):
-    """Result of search_hotels function."""
-
-    hotels: list[Hotel]
-    total_available: int
-    total_after_filter: int
 
 
 class SampleHotelsResult(TypedDict):
@@ -266,75 +249,11 @@ def sample_hotels(
     }
 
 
-async def search_hotels(  # noqa: PLR0913
-    client: ETGClient,
-    region_id: int,
-    checkin: str,
-    checkout: str,
-    residency: str,
-    guests: list[GuestRoom],
-    currency: str | None = None,
-    language: str | None = None,
-    hotels_limit: int | None = None,
-    min_price: float | None = None,
-    max_price: float | None = None,
-) -> SearchHotelsResult:
-    """Search hotels with price filtering.
-
-    Args:
-        client: ETG API client.
-        region_id: Region identifier.
-        checkin: Check-in date (YYYY-MM-DD).
-        checkout: Check-out date (YYYY-MM-DD).
-        residency: Guest residency country code.
-        guests: List of room configurations.
-        currency: Price currency code.
-        language: Response language code.
-        hotels_limit: Maximum hotels from API.
-        min_price: Minimum price per night filter.
-        max_price: Maximum price per night filter.
-
-    Returns:
-        SearchHotelsResult with hotels and statistics.
-    """
-    results = await client.search_hotels_by_region(
-        region_id=region_id,
-        checkin=checkin,
-        checkout=checkout,
-        residency=residency,
-        guests=guests,
-        currency=currency,
-        language=language,
-        hotels_limit=hotels_limit,
-    )
-
-    hotels: list[Hotel] = results.get("hotels", [])
-    total_available = results.get("total_hotels", len(hotels))
-
-    hotels = filter_hotels_by_price(hotels, min_price, max_price)
-    total_after_filter = len(hotels)
-
-    return {
-        "hotels": hotels,
-        "total_available": total_available,
-        "total_after_filter": total_after_filter,
-    }
-
-
-class BatchGetContentResult(TypedDict):
-    """Result of batch_get_content function."""
-
-    content: dict[int, HotelContent]
-    total_requested: int
-    total_loaded: int
-    total_batches: int
-
-
 async def batch_get_content(
     client: ETGClient,
     hids: list[int],
     language: str,
-) -> BatchGetContentResult:
+) -> dict[int, HotelContent]:
     """Fetch hotel content in batches.
 
     Args:
@@ -343,44 +262,20 @@ async def batch_get_content(
         language: Response language code.
 
     Returns:
-        BatchGetContentResult with content map and statistics.
+        Mapping of hotel ID to hotel content.
     """
     content_map: dict[int, HotelContent] = {}
-    total = len(hids)
-    total_batches = (total + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
-    failed_batches = 0
 
-    for batch_num, i in enumerate(range(0, total, CONTENT_BATCH_SIZE), start=1):
+    for i in range(0, len(hids), CONTENT_BATCH_SIZE):
         batch = hids[i : i + CONTENT_BATCH_SIZE]
         try:
             content = await client.get_hotel_content(hids=batch, language=language)
             for hotel in content:
                 content_map[hotel["hid"]] = hotel
-        except ETGAPIError as e:
-            failed_batches += 1
-            logger.warning(
-                "Content batch %d/%d failed: %s",
-                batch_num,
-                total_batches,
-                e,
-            )
+        except ETGAPIError:
             continue
 
-    if failed_batches > 0:
-        logger.warning(
-            "Content fetching: %d/%d batches failed, loaded %d/%d hotels",
-            failed_batches,
-            total_batches,
-            len(content_map),
-            total,
-        )
-
-    return {
-        "content": content_map,
-        "total_requested": total,
-        "total_loaded": len(content_map),
-        "total_batches": total_batches,
-    }
+    return content_map
 
 
 def calculate_prescore(
@@ -471,26 +366,29 @@ def presort_hotels(
     return result
 
 
-def _get_valid_rate_hash(hotel: HotelFull, selected_hash: str) -> str:
-    """Validate selected_rate_hash and fallback to first rate if invalid.
+def _get_valid_rate_hash(hotel: HotelFull, selected_hash: str | None) -> str | None:
+    """Validate selected_rate_hash from LLM.
 
     Args:
         hotel: Hotel data with rates.
-        selected_hash: Hash returned by LLM.
+        selected_hash: Hash returned by LLM (can be None).
 
     Returns:
-        Valid rate hash (selected if valid, otherwise first available).
+        Valid rate hash if found, None if invalid or no rates available.
     """
+    if selected_hash is None:
+        return None
+
     rates = hotel.get("rates", [])
     if not rates:
-        return selected_hash  # No rates to validate against
+        return None  # No rates available
 
     valid_hashes = {rate.get("match_hash", "") for rate in rates}
     if selected_hash in valid_hashes:
         return selected_hash
 
-    # Fallback to first rate's hash
-    return rates[0].get("match_hash", selected_hash)
+    # Invalid hash - return None instead of fallback
+    return None
 
 
 def finalize_scored_hotels(

@@ -44,7 +44,7 @@ cp .env.example .env
 
 ## Jupyter notebook
 
-Основной режим разработки. Настройте параметры поиска в первой ячейке `etg_hotels.ipynb`:
+Основной режим разработки. Настройте параметры поиска в первой ячейке `search_hotels.ipynb`:
 
 ```python
 CITY = "Москва"
@@ -106,7 +106,7 @@ curl -X POST http://localhost:8000/hotels/search/stream \
 ```
 main.py              — точка входа (uvicorn)
 config.py            — конфигурация из переменных окружения
-etg_hotels.ipynb     — Jupyter notebook для исследования и отладки
+search_hotels.ipynb     — Jupyter notebook для исследования и отладки
 
 etg/                 — ETG API клиент
   types.py           — типы данных (GuestRoom, Hotel, HotelContent, Review...)

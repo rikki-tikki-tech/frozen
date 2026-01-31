@@ -58,7 +58,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports OK in __init__
-"etg_hotels.ipynb" = ["ALL"]  # notebook — не линтуем
+"search_hotels.ipynb" = ["ALL"]  # notebook — не линтуем
 
 [tool.ruff.lint.isort]
 known-first-party = ["api", "config", "etg", "services", "utils"]

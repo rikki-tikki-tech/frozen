@@ -1,12 +1,9 @@
 """Review fetching, filtering, and aggregation."""
 
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict, cast
 
 from etg import ETGAPIError, ETGClient
-
-logger = logging.getLogger(__name__)
 
 # Type alias for review dict (API data + custom fields)
 ReviewDict = dict[str, Any]
@@ -15,7 +12,7 @@ REVIEWS_BATCH_SIZE = 100
 BASE_REVIEW_LANGUAGES = ["ru", "en"]
 
 DEFAULT_MAX_AGE_YEARS = 5
-DEFAULT_MAX_REVIEWS = 50
+DEFAULT_MAX_REVIEWS = 500
 
 # Mapping for string values in detailed_review
 WIFI_SCORES: dict[str, float] = {
@@ -49,15 +46,14 @@ class DetailedAverages(TypedDict):
 
 
 class HotelReviews(TypedDict):
-    """Hotel reviews with aggregated ratings and optional filtering stats.
+    """Hotel reviews with aggregated ratings.
 
     Contains average rating and detailed category averages computed
-    from ALL reviews, plus review list (filtered or unfiltered) and stats.
+    from ALL reviews, plus review list (filtered or unfiltered).
     """
 
     reviews: list[ReviewDict]
     total_reviews: int
-    filtered_by_age: int
     avg_rating: float | None
     detailed_averages: DetailedAverages
 
@@ -70,14 +66,12 @@ async def batch_get_reviews(
     """Fetch reviews for hotels in multiple languages and compute aggregated ratings.
 
     Returns reviews with avg_rating and detailed_averages computed from ALL reviews.
-    filtered_by_age is set to 0 (no filtering applied yet).
     """
     languages = BASE_REVIEW_LANGUAGES.copy()
     if language not in languages:
         languages.append(language)
 
     reviews_map: dict[int, list[ReviewDict]] = {}
-    failed_languages: list[str] = []
 
     for lang in languages:
         try:
@@ -95,17 +89,8 @@ async def batch_get_reviews(
                     if hid not in reviews_map:
                         reviews_map[hid] = []
                     reviews_map[hid].extend(reviews_list)
-        except ETGAPIError as e:
-            failed_languages.append(lang)
-            logger.warning("Reviews fetch failed for language '%s': %s", lang, e)
+        except ETGAPIError:
             continue
-
-    if failed_languages:
-        logger.warning(
-            "Reviews fetching: languages %s failed, got reviews for %d hotels",
-            failed_languages,
-            len(reviews_map),
-        )
 
     # Compute ratings for each hotel
     result: dict[int, HotelReviews] = {}
@@ -115,7 +100,6 @@ async def batch_get_reviews(
         result[hid] = {
             "reviews": reviews,
             "total_reviews": len(reviews),
-            "filtered_by_age": 0,  # No filtering applied yet
             "avg_rating": avg_rating,
             "detailed_averages": detailed_averages,
         }
@@ -199,7 +183,6 @@ def filter_reviews(
     1. Filter out reviews older than max_age_years
     2. Keep up to max_reviews most recent reviews
     3. Preserve avg_rating and detailed_averages from original data
-    4. Update filtered_by_age counter
     """
     filtered_map: dict[int, HotelReviews] = {}
 
@@ -210,7 +193,6 @@ def filter_reviews(
         # Filter by age
         cutoff_date = (datetime.now(tz=UTC) - timedelta(days=max_age_years * 365)).isoformat()
         recent_reviews = [r for r in reviews if r["created"] >= cutoff_date]
-        filtered_by_age = total_reviews - len(recent_reviews)
 
         # Sort by date and limit
         recent_reviews.sort(key=lambda x: x["created"], reverse=True)
@@ -219,7 +201,6 @@ def filter_reviews(
         filtered_map[hid] = {
             "reviews": recent_reviews,
             "total_reviews": total_reviews,
-            "filtered_by_age": filtered_by_age,
             "avg_rating": raw_data["avg_rating"],
             "detailed_averages": raw_data["detailed_averages"],
         }
