@@ -2,11 +2,13 @@
 
 from datetime import date
 from enum import Enum
+from typing import ClassVar
 
 from pydantic import BaseModel
 
 from etg import GuestRoom
 from services import HotelScored
+from utils import SSEMessage
 
 
 class EventType(str, Enum):
@@ -36,10 +38,21 @@ class EventType(str, Enum):
     DONE = "done"
 
 
-class HotelSearchStartEvent(BaseModel):
+class SSEBaseEvent(BaseModel):
+    """Base class for SSE payloads with bound event names."""
+
+    event_type: ClassVar[EventType]
+
+
+def sse_message(payload: "SSEBaseEvent") -> SSEMessage:
+    """Wrap payload into SSE message using its bound event type."""
+    return SSEMessage(event=payload.event_type.value, data=payload)
+
+
+class HotelSearchStartEvent(SSEBaseEvent):
     """Hotel search started."""
 
-    type: EventType = EventType.HOTEL_SEARCH_START
+    event_type: ClassVar[EventType] = EventType.HOTEL_SEARCH_START
     region_id: int
     checkin: date
     checkout: date
@@ -52,83 +65,83 @@ class HotelSearchStartEvent(BaseModel):
     user_preferences: str | None = None
 
 
-class HotelSearchDoneEvent(BaseModel):
+class HotelSearchDoneEvent(SSEBaseEvent):
     """Hotels found after ETG search + filtering."""
 
-    type: EventType = EventType.HOTEL_SEARCH_DONE
+    event_type: ClassVar[EventType] = EventType.HOTEL_SEARCH_DONE
     total_available: int
     total_after_filter: int
     sampled: int | None = None
 
 
-class BatchGetContentStartEvent(BaseModel):
+class BatchGetContentStartEvent(SSEBaseEvent):
     """Content fetching started."""
 
-    type: EventType = EventType.BATCH_GET_CONTENT_START
+    event_type: ClassVar[EventType] = EventType.BATCH_GET_CONTENT_START
     total_hotels: int
     total_batches: int
 
 
-class BatchGetContentDoneEvent(BaseModel):
+class BatchGetContentDoneEvent(SSEBaseEvent):
     """Content fetching completed."""
 
-    type: EventType = EventType.BATCH_GET_CONTENT_DONE
+    event_type: ClassVar[EventType] = EventType.BATCH_GET_CONTENT_DONE
     hotels_with_content: int
     total_hotels: int
 
 
-class BatchGetReviewsStartEvent(BaseModel):
+class BatchGetReviewsStartEvent(SSEBaseEvent):
     """Reviews fetching started."""
 
-    type: EventType = EventType.BATCH_GET_REVIEWS_START
+    event_type: ClassVar[EventType] = EventType.BATCH_GET_REVIEWS_START
     total_hotels: int
     total_batches: int
 
 
-class BatchGetReviewsDoneEvent(BaseModel):
+class BatchGetReviewsDoneEvent(SSEBaseEvent):
     """Reviews fetching completed."""
 
-    type: EventType = EventType.BATCH_GET_REVIEWS_DONE
+    event_type: ClassVar[EventType] = EventType.BATCH_GET_REVIEWS_DONE
     hotels_with_reviews: int
     total_hotels: int
 
 
-class PresortDoneEvent(BaseModel):
+class PresortDoneEvent(SSEBaseEvent):
     """Pre-sorting completed."""
 
-    type: EventType = EventType.PRESORT_DONE
+    event_type: ClassVar[EventType] = EventType.PRESORT_DONE
     input_hotels: int
     output_hotels: int
 
 
-class ScoringStartEvent(BaseModel):
+class ScoringStartEvent(SSEBaseEvent):
     """Scoring started."""
 
-    type: EventType = EventType.SCORING_START
+    event_type: ClassVar[EventType] = EventType.SCORING_START
     total_hotels: int
 
 
-class ScoringDoneEvent(BaseModel):
+class ScoringDoneEvent(SSEBaseEvent):
     """Scoring completed with summary."""
 
-    type: EventType = EventType.SCORING_DONE
+    event_type: ClassVar[EventType] = EventType.SCORING_DONE
     scored_count: int
     summary: str
 
 
-class ErrorEvent(BaseModel):
+class ErrorEvent(SSEBaseEvent):
     """Error event."""
 
-    type: EventType = EventType.ERROR
+    event_type: ClassVar[EventType] = EventType.ERROR
     error_type: str
     error_message: str
     batch: int | None = None
 
 
-class DoneEvent(BaseModel):
+class DoneEvent(SSEBaseEvent):
     """Search completed."""
 
-    type: EventType = EventType.DONE
+    event_type: ClassVar[EventType] = EventType.DONE
     total_scored: int
     hotels: list[HotelScored]
 
