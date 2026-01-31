@@ -62,6 +62,7 @@ class HotelScored(HotelFull):
     score: int
     top_reasons: list[str]
     score_penalties: list[str]
+    selected_rate_hash: str
 
 
 def combine_hotels_data(
@@ -477,6 +478,7 @@ def finalize_scored_hotels(
             "score": score_data["score"],
             "top_reasons": score_data["top_reasons"],
             "score_penalties": score_data["score_penalties"],
+            "selected_rate_hash": score_data["selected_rate_hash"],
         }
         result.append(cast("HotelScored", scored_hotel))
 

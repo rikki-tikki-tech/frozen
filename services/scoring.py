@@ -33,6 +33,7 @@ class HotelScoreDict(TypedDict):
     score: int
     top_reasons: list[str]
     score_penalties: list[str]
+    selected_rate_hash: str
 
 
 class HotelScore(BaseModel):
@@ -42,6 +43,7 @@ class HotelScore(BaseModel):
     score: int
     top_reasons: list[str]
     score_penalties: list[str]
+    selected_rate_hash: str
 
 
 class ScoringResponse(BaseModel):
@@ -67,6 +69,8 @@ class ScoringResultDict(TypedDict):
 SCORING_PROMPT = """\
 You are an expert Hotel Recommendation Engine specializing in "Value for Money" analysis.
 
+**CRITICAL OUTPUT REQUIREMENT:** You MUST return EXACTLY {top_count} hotels in the results array. Score ALL input hotels and return the top {top_count} highest-scoring ones.
+
 ## Input Data
 1. **Guests:** {guests_info}
 2. **Price Range:** {price_range}
@@ -80,14 +84,14 @@ Use the following tiers to evaluate `hotel_kind`. Tier 1 is most desirable.
 - **Tier 3 (Budget/Alt):** BNB, Glamping, Cottages_and_Houses, Farm.
 - **Tier 4 (Low):** Hostel, Camping, Unspecified.
 
-**Rule:** Tier 1 and 2 are preferred. Tier 3 and 4 should be heavily penalized (-20 points) UNLESS the user explicitly requested them or the budget is extremely low (<$30).
+**Rule:** Tier 1 and 2 are preferred. Tier 3 and 4 should be heavily penalized (-50 points) UNLESS the user explicitly requested them or the budget is extremely low (<$30).
 
 ## 2. Core Scoring Philosophy (The "Brain")
 **CRITICAL:** Do NOT simply rank by lowest price.
 
 **A. The "Anti-Downgrade" Star Rule**
 Scan the market prices first.
-- **If 4-5 Star hotels are within budget:** Immediately disqualify or severely penalize (-30 pts) any hotel with **3 stars or less**.
+- **If 4-5 Star hotels are within budget:** Immediately disqualify or severely penalize (-25 pts) any hotel with **3 stars or less**.
 - **If 3-4 Star hotels are within budget:** Immediately disqualify or penalize any hotel with **2 stars or less**.
 *Logic: Do not recommend a "downgrade" if quality is affordable.*
 
@@ -105,8 +109,36 @@ A $200 Tier 1 (Resort) is better than a $100 Tier 4 (Hostel). Award higher score
 - **Penalty:** Deductions for missing explicit needs.
 
 ## 3. Field Content Guidelines
-
 Generate the response based on the provided schema. Follow these specific instructions:
+
+### `hotel_id` (string)
+The unique identifier of the hotel from the input data.
+
+### `selected_rate_hash` (string) - MANDATORY FIELD
+**CRITICAL REQUIREMENT:** Each hotel has a `rates` array. Each rate has a `match_hash` field.
+
+**Your task:**
+1. Look at ALL rates for the hotel in the `rates` array
+2. Each rate has: `match_hash`, `room`, `price`, `meal`, `has_breakfast`, optionally `free_cancel_before`
+3. Select the BEST rate based on:
+   - **Room suitability:** Can accommodate all guests (check adults + children counts)
+   - **Meal preferences:** If user wants breakfast, pick rate with `has_breakfast: true`
+   - **Cancellation:** Prefer `free_cancel_before` when available
+   - **Value:** Balance price with amenities (slightly pricier with breakfast may be better value)
+
+**CRITICAL:** Copy the EXACT `match_hash` string from the selected rate. Do NOT make up or modify this value.
+
+**Example input:**
+```json
+{{
+  "hotel_id": "example_hotel",
+  "rates": [
+    {{"match_hash": "abc123", "room": "Standard", "price": "5000 RUB", "meal": "nomeal"}},
+    {{"match_hash": "xyz789", "room": "Family Suite", "price": "8000 RUB", "meal": "breakfast", "has_breakfast": true}}
+  ]
+}}
+```
+**Example output for this hotel:** `"selected_rate_hash": "xyz789"` (if family suite with breakfast is better for user)
 
 ### `score` (integer 0-100)
 - **90-100:** Tier 1/2, High Stars, **Guest Rating 9.0+**, Great Price.
@@ -130,18 +162,90 @@ Explain exactly why the score is not 100.
   - "Low priority type: Hostel (Tier 4)"
   - "Only 2 stars (Market offers 4 stars at this price)"
 
+### `type` (strings)
+Specify the type of accommodation.
+- **Examples:**
+    - Resort
+    - Hotel
+    - Hostel
+
+### `cost` (strings)
+Specify the cost per night with the currency and add cost per stay.
+- **Examples:**
+    - $400 for your 4-nights stay ($100 per night)
+    - €1200 for your 6-nights stay (€200 per night)
+
+### `location` (strings)
+Specify the location of accommodation.
+- **Examples:**
+    - 1km from the beach
+    - 11km from the city center
+
+### `rooms` (strings)
+Specify the location of accommodation.
+- **Examples:**
+    - 2 double rooms for you family (2 adults and 2 kids)
+    - 2-rooms apartment
+
+### `rating` (strings)
+Specify the guest rating.
+- **Examples:**
+    - 7.8/10
+    - 8.5/10
+
 ### `summary` (string)
-Write a strategic market analysis (4-6 sentences).
-**CRITICAL REQUIREMENT:** You MUST cite specific examples of lower-ranked hotels to explain the trade-offs.
-- **Logic:** Explain that you prioritized Tier 1/2, High Stars, and **High Guest Ratings**.
-- **Explicit Citations:** When mentioning rejected hotels, you **MUST include their Name, ID, and Rating**.
-- **Example Pattern:** "We analyzed hotels from $50 to $500. While 'Budget Hostel' (ID: 123) is cheap ($40), it was rejected due to a poor guest rating (5.5/10). 'City Inn' (ID: 456, 2-stars) was excluded because for only $20 more, you can stay at the 4-star 'Grand Hotel' (ID: 789) which has a 9.2 rating. The top picks focus on highly-rated Tier 1 properties."
+Produce a **strategic market overview** in **4–6 sentences**.
+
+**Must include:**
+- A high-level description of the market: median price, primary hotel locations (city center vs outside), and the **dominant accommodation type (hotels, hostels, apartments).
+- The price range analyzed.
+- A clear explanation that the selection prioritized properties with the strong cost–value balance, higher star ratings, and high guest ratings. Do not mention Tiers.
+
+**Rejection transparency (mandatory):**
+- When referencing rejected properties, explicitly state that this is the example and mention the hotel Name, ID, and Guest Rating, and briefly explain why they were excluded (e.g., poor rating, weak value versus higher-tier alternatives).
+
+**Positioning:**
+- Conclude by reinforcing that the final recommendations emphasize highly rated, best-value Tier 1/2 accommodations** over cheaper but lower-quality options.
+
+**Example phrasing pattern (illustrative only):**  
+"Most of the accommodations in city X are centrally located apartments, with a median price of $150. We analyzed options ranging from $50 to $500. As an example: 'Budget Hostel' (ID: 123, rating 5.5/10) was excluded due to low guest satisfaction despite its low price. 'City Inn' (ID: 456, 2★, rating 6.8) was rejected because for a slightly higher cost, higher-tier properties offer significantly better value. The final selection focuses on the hotels with strong guest ratings and superior overall quality."
 
 ## 4. Final Selection & Output
+**CRITICAL:** You MUST score EVERY SINGLE hotel from the input list. Do not skip or ignore any hotels.
+
 After evaluating all provided hotels:
-1. **Sort:** Rank all hotels by `score` in descending order (highest score first).
-2. **Limit:** Select exactly the **TOP 10** highest-scoring hotels for the `results` list.
-3. **Format:** Ensure the output complies with the JSON schema structure.
+1. **Score every hotel (mandatory):**
+   Assign a numeric score from **0 to 100** to **every hotel** in the input list.
+   Hotels with similar accommodation types or amenities **may receive similar scores**.
+2. **Sort (required):**
+   Rank all hotels by `score` in **descending order** (highest score first).
+3. **Select TOP `{top_count}` (hard constraint):**
+   The `results` array **MUST contain EXACTLY `{top_count}` hotels**, selected strictly from the highest-scoring entries.
+   No more and no fewer results are allowed.
+4. **Output format (strict):**
+   The final output **MUST fully comply** with the required **JSON schema structure**.
+
+**RESPONSE FORMAT EXAMPLE:**
+```json
+{{
+  "results": [
+    {{
+      "hotel_id": "example_hotel_1",
+      "selected_rate_hash": "abc123xyz",
+      "score": 95,
+      "top_reasons": ["Reason 1", "Reason 2", "Reason 3"],
+      "score_penalties": ["Penalty 1"]
+    }},
+    ...exactly {top_count} hotels total
+  ],
+  "summary": "Market overview and selection rationale..."
+}}
+```
+
+**REMINDER:**
+- The output must include exactly {top_count} hotel objects in the `results` array
+- EVERY hotel object MUST have `selected_rate_hash` copied from one of its rates
+- Always fill the full quota of {top_count} hotels
 """
 
 TOP_HOTELS_COUNT = 10
@@ -206,6 +310,7 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         meal_data = rate.get("meal_data", {})
 
         rate_info = {
+            "match_hash": rate.get("match_hash", ""),
             "room": rate.get("room_name", "")[:60],
             "price": f"{price_str} {currency}" if price_str else None,
             "meal": meal_data.get("value", rate.get("meal", "")),
@@ -229,7 +334,7 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
 
     hr = hotel.get("reviews", {})
     raw_reviews = hr.get("reviews", []) if isinstance(hr, dict) else []
-    reviews = [
+    reviews_sample = [
         {
             "id": r.get("id"),
             "rating": r.get("rating"),
@@ -238,6 +343,14 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         }
         for r in raw_reviews[:MAX_REVIEWS_PER_HOTEL]
     ]
+
+    # Add aggregated review statistics
+    reviews_data = {
+        "total_reviews": hr.get("total_reviews", 0) if isinstance(hr, dict) else 0,
+        "avg_rating": hr.get("avg_rating") if isinstance(hr, dict) else None,
+        "detailed_averages": hr.get("detailed_averages", {}) if isinstance(hr, dict) else {},
+        "sample_reviews": reviews_sample,
+    }
 
     return {
         "hotel_id": hotel.get("id", ""),
@@ -250,7 +363,7 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         "serp_filters": hotel.get("serp_filters", []),
         "rates": rates_info,
         "amenities": amenities[:MAX_AMENITIES_PER_HOTEL],
-        "reviews": reviews,
+        "reviews": reviews_data,
     }
 
 
@@ -289,6 +402,7 @@ def _build_prompt(  # noqa: PLR0913
     min_price: float | None,
     max_price: float | None,
     currency: str | None,
+    top_count: int,
 ) -> str:
     """Build scoring prompt for hotels."""
     return SCORING_PROMPT.format(
@@ -297,6 +411,7 @@ def _build_prompt(  # noqa: PLR0913
         user_preferences=user_preferences,
         total_hotels=len(hotels_data),
         hotels_json=json.dumps(hotels_data, ensure_ascii=False),
+        top_count=top_count,
     )
 
 
@@ -314,11 +429,12 @@ async def score_hotels(  # noqa: PLR0913
     currency: str | None = None,
     model_name: str | None = None,
     retries: int = DEFAULT_RETRIES,
+    top_count: int = TOP_HOTELS_COUNT,
 ) -> ScoringResultDict:
-    """Score hotels and return top 10 with summary.
+    """Score hotels and return top N with summary.
 
     Single LLM call that analyzes all hotels and returns:
-    - Top 10 scored hotels
+    - Top N scored hotels (configurable via top_count)
     - Summary explaining price range, trade-offs, why cheaper options are worse
 
     Args:
@@ -330,15 +446,17 @@ async def score_hotels(  # noqa: PLR0913
         currency: Currency code (e.g., 'RUB', 'USD').
         model_name: Optional model name override.
         retries: Number of retry attempts on failure.
+        top_count: Number of top hotels to return from LLM.
 
     Returns:
         ScoringResultDict with results, summary, error, and token estimate.
     """
     agent = _create_agent(model_name)
+    top_count = min(top_count, len(hotels))
 
     hotels_for_llm = [prepare_hotel_for_llm(h) for h in hotels]
     prompt = _build_prompt(
-        hotels_for_llm, user_preferences, guests, min_price, max_price, currency
+        hotels_for_llm, user_preferences, guests, min_price, max_price, currency, top_count
     )
     estimated_tokens = estimate_tokens(prompt)
 
@@ -360,8 +478,9 @@ async def score_hotels(  # noqa: PLR0913
                     score=h.score,
                     top_reasons=h.top_reasons,
                     score_penalties=h.score_penalties,
+                    selected_rate_hash=h.selected_rate_hash,
                 )
-                for h in response.output.results[:TOP_HOTELS_COUNT]
+                for h in response.output.results[:top_count]
             ]
             return {
                 "results": results,
