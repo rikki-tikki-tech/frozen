@@ -107,49 +107,49 @@ async def search_stream(  # noqa: PLR0915
             return
 
         # Phase 2: Fetch content
-        hids = [h["hid"] for h in hotels]
-        total_batches = (len(hids) + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
+        hotel_ids = [hotel["hid"] for hotel in hotels]
+        total_batches = (len(hotel_ids) + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
         yield sse_event(BatchGetContentStartEvent(
-            total_hotels=len(hids),
+            total_hotels=len(hotel_ids),
             total_batches=total_batches,
         ))
-        content_map = await batch_get_content(etg_client, hids, language)
+        content_map = await batch_get_content(etg_client, hotel_ids, language)
         yield sse_event(BatchGetContentDoneEvent(
             hotels_with_content=len(content_map),
-            total_hotels=len(hids),
+            total_hotels=len(hotel_ids),
         ))
 
         # Phase 3: Fetch reviews
-        reviews_batches = (len(hids) + REVIEWS_BATCH_SIZE - 1) // REVIEWS_BATCH_SIZE
+        reviews_batch_count = (len(hotel_ids) + REVIEWS_BATCH_SIZE - 1) // REVIEWS_BATCH_SIZE
         yield sse_event(BatchGetReviewsStartEvent(
-            total_hotels=len(hids),
-            total_batches=reviews_batches,
+            total_hotels=len(hotel_ids),
+            total_batches=reviews_batch_count,
         ))
-        raw_reviews = await batch_get_reviews(etg_client, hids, language)
-        reviews_map = filter_reviews(raw_reviews)
+        reviews_payload = await batch_get_reviews(etg_client, hotel_ids, language)
+        reviews_map = filter_reviews(reviews_payload)
         yield sse_event(BatchGetReviewsDoneEvent(
             hotels_with_reviews=len(reviews_map),
-            total_hotels=len(hids),
+            total_hotels=len(hotel_ids),
         ))
 
         # Phase 4: Presort
-        combined = combine_hotels_data(hotels, content_map, reviews_map)
-        top_hotels = presort_hotels(combined, reviews_map, limit=PRESORT_LIMIT)
+        combined_hotels = combine_hotels_data(hotels, content_map, reviews_map)
+        top_hotels = presort_hotels(combined_hotels, reviews_map, limit=PRESORT_LIMIT)
 
         yield sse_event(PresortDoneEvent(
-            input_hotels=len(combined),
+            input_hotels=len(combined_hotels),
             output_hotels=len(top_hotels),
         ))
 
         # Phase 5: LLM Scoring
-        preferences = user_preferences or DEFAULT_PREFERENCES
+        scoring_preferences = user_preferences or DEFAULT_PREFERENCES
         yield sse_event(ScoringStartEvent(
             total_hotels=len(top_hotels),
         ))
 
         scoring_result = await score_hotels(
             top_hotels,
-            preferences,
+            scoring_preferences,
             guests=guests,
             min_price=min_price_per_night,
             max_price=max_price_per_night,

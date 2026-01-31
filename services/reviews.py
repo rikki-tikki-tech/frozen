@@ -60,7 +60,7 @@ class HotelReviews(TypedDict):
 
 async def batch_get_reviews(
     client: ETGClient,
-    hids: list[int],
+    hotel_ids: list[int],
     language: str,
 ) -> dict[int, HotelReviews]:
     """Fetch reviews for hotels in multiple languages and compute aggregated ratings.
@@ -73,18 +73,21 @@ async def batch_get_reviews(
 
     reviews_map: dict[int, list[ReviewDict]] = {}
 
-    for lang in languages:
+    for language_code in languages:
         try:
-            for i in range(0, len(hids), REVIEWS_BATCH_SIZE):
-                batch = hids[i : i + REVIEWS_BATCH_SIZE]
-                hotels_reviews = await client.get_hotel_reviews(hids=batch, language=lang)
+            for i in range(0, len(hotel_ids), REVIEWS_BATCH_SIZE):
+                hotel_id_batch = hotel_ids[i : i + REVIEWS_BATCH_SIZE]
+                hotel_reviews_batch = await client.get_hotel_reviews(
+                    hids=hotel_id_batch,
+                    language=language_code,
+                )
 
-                for hotel_data in hotels_reviews:
+                for hotel_data in hotel_reviews_batch:
                     hid = hotel_data["hid"]
                     reviews_list = cast("list[ReviewDict]", hotel_data["reviews"])
 
-                    for r in reviews_list:
-                        r["_lang"] = lang
+                    for review in reviews_list:
+                        review["_lang"] = language_code
 
                     if hid not in reviews_map:
                         reviews_map[hid] = []
@@ -133,9 +136,18 @@ def _compute_ratings(reviews: list[ReviewDict]) -> tuple[float | None, DetailedA
 
 def _compute_detailed_averages(reviews: list[ReviewDict]) -> DetailedAverages:
     """Compute average scores for detailed review categories."""
-    fields = ("cleanness", "location", "price", "services", "room", "meal", "wifi", "hygiene")
-    sums: dict[str, float] = dict.fromkeys(fields, 0.0)
-    counts: dict[str, int] = dict.fromkeys(fields, 0)
+    rating_fields = (
+        "cleanness",
+        "location",
+        "price",
+        "services",
+        "room",
+        "meal",
+        "wifi",
+        "hygiene",
+    )
+    rating_sums: dict[str, float] = dict.fromkeys(rating_fields, 0.0)
+    rating_counts: dict[str, int] = dict.fromkeys(rating_fields, 0)
 
     for review in reviews:
         detailed = review.get("detailed_review")
@@ -146,29 +158,29 @@ def _compute_detailed_averages(reviews: list[ReviewDict]) -> DetailedAverages:
         for field in ("cleanness", "location", "price", "services", "room", "meal"):
             value = detailed.get(field)
             if isinstance(value, int | float) and value > 0:
-                sums[field] += float(value)
-                counts[field] += 1
+                rating_sums[field] += float(value)
+                rating_counts[field] += 1
 
         # String fields
         wifi_str = detailed.get("wifi")
         if wifi_str and wifi_str in WIFI_SCORES:
-            sums["wifi"] += WIFI_SCORES[wifi_str]
-            counts["wifi"] += 1
+            rating_sums["wifi"] += WIFI_SCORES[wifi_str]
+            rating_counts["wifi"] += 1
 
         hygiene_str = detailed.get("hygiene")
         if hygiene_str and hygiene_str in HYGIENE_SCORES:
-            sums["hygiene"] += HYGIENE_SCORES[hygiene_str]
-            counts["hygiene"] += 1
+            rating_sums["hygiene"] += HYGIENE_SCORES[hygiene_str]
+            rating_counts["hygiene"] += 1
 
     return {
-        "cleanness": _avg(sums["cleanness"], counts["cleanness"]),
-        "location": _avg(sums["location"], counts["location"]),
-        "price": _avg(sums["price"], counts["price"]),
-        "services": _avg(sums["services"], counts["services"]),
-        "room": _avg(sums["room"], counts["room"]),
-        "meal": _avg(sums["meal"], counts["meal"]),
-        "wifi": _avg(sums["wifi"], counts["wifi"]),
-        "hygiene": _avg(sums["hygiene"], counts["hygiene"]),
+        "cleanness": _avg(rating_sums["cleanness"], rating_counts["cleanness"]),
+        "location": _avg(rating_sums["location"], rating_counts["location"]),
+        "price": _avg(rating_sums["price"], rating_counts["price"]),
+        "services": _avg(rating_sums["services"], rating_counts["services"]),
+        "room": _avg(rating_sums["room"], rating_counts["room"]),
+        "meal": _avg(rating_sums["meal"], rating_counts["meal"]),
+        "wifi": _avg(rating_sums["wifi"], rating_counts["wifi"]),
+        "hygiene": _avg(rating_sums["hygiene"], rating_counts["hygiene"]),
     }
 
 
@@ -186,9 +198,9 @@ def filter_reviews(
     """
     filtered_map: dict[int, HotelReviews] = {}
 
-    for hid, raw_data in reviews_map.items():
-        reviews = raw_data["reviews"]
-        total_reviews = raw_data["total_reviews"]
+    for hid, hotel_reviews_data in reviews_map.items():
+        reviews = hotel_reviews_data["reviews"]
+        total_reviews = hotel_reviews_data["total_reviews"]
 
         # Filter by age
         cutoff_date = (datetime.now(tz=UTC) - timedelta(days=max_age_years * 365)).isoformat()
@@ -201,8 +213,8 @@ def filter_reviews(
         filtered_map[hid] = {
             "reviews": recent_reviews,
             "total_reviews": total_reviews,
-            "avg_rating": raw_data["avg_rating"],
-            "detailed_averages": raw_data["detailed_averages"],
+            "avg_rating": hotel_reviews_data["avg_rating"],
+            "detailed_averages": hotel_reviews_data["detailed_averages"],
         }
 
     return filtered_map

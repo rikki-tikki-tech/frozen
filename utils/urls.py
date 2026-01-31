@@ -29,11 +29,11 @@ def ostrovok_url(  # noqa: PLR0913
         Full Ostrovok URL for the hotel
     """
     # Convert dates from YYYY-MM-DD to DD.MM.YYYY
-    ci_parts = checkin.split("-")
-    co_parts = checkout.split("-")
-    dates = (
-        f"{ci_parts[2]}.{ci_parts[1]}.{ci_parts[0]}-"
-        f"{co_parts[2]}.{co_parts[1]}.{co_parts[0]}"
+    checkin_parts = checkin.split("-")
+    checkout_parts = checkout.split("-")
+    stay_dates = (
+        f"{checkin_parts[2]}.{checkin_parts[1]}.{checkin_parts[0]}-"
+        f"{checkout_parts[2]}.{checkout_parts[1]}.{checkout_parts[0]}"
     )
 
     # Format guests: "{adults}and{child1_age}.{child2_age}..." per room
@@ -50,4 +50,4 @@ def ostrovok_url(  # noqa: PLR0913
     guests_param = ",".join(guests_parts)
 
     base = f"https://ostrovok.ru/hotel/{country_slug}/{city_slug}"
-    return f"{base}/mid{hid}/{hotel_id}/?dates={dates}&guests={guests_param}&q={region_id}"
+    return f"{base}/mid{hid}/{hotel_id}/?dates={stay_dates}&guests={guests_param}&q={region_id}"
