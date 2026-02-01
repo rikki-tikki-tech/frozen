@@ -64,4 +64,11 @@ class HotelSearchRequest(BaseModel):
         if self.checkout <= self.checkin:
             msg = "Дата выезда должна быть позже даты заезда"
             raise ValueError(msg)
+        if (
+            self.min_price_per_night is not None
+            and self.max_price_per_night is not None
+            and self.min_price_per_night > self.max_price_per_night
+        ):
+            msg = "Минимальная цена за ночь не может быть больше максимальной цены"
+            raise ValueError(msg)
         return self

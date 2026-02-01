@@ -33,6 +33,7 @@ from .events import (
     PresortDoneEvent,
     ScoringDoneEvent,
     ScoringStartEvent,
+    sse_message,
 )
 from .schemas import HotelSearchRequest
 
@@ -59,7 +60,7 @@ async def search_stream(  # noqa: PLR0915
 
     try:
         # Phase 1: Search hotels
-        yield sse_event(HotelSearchStartEvent(
+        yield sse_event(sse_message(HotelSearchStartEvent(
             region_id=region_id,
             checkin=checkin,
             checkout=checkout,
@@ -70,7 +71,7 @@ async def search_stream(  # noqa: PLR0915
             min_price_per_night=min_price_per_night,
             max_price_per_night=max_price_per_night,
             user_preferences=user_preferences,
-        ))
+        )))
 
         # Search hotels in region
         search_results = await etg_client.search_hotels_by_region(
@@ -95,61 +96,61 @@ async def search_stream(  # noqa: PLR0915
         sample_result = sample_hotels(filtered_hotels)
         hotels = sample_result["hotels"]
         sampled = sample_result["sampled"]
-        yield sse_event(HotelSearchDoneEvent(
+        yield sse_event(sse_message(HotelSearchDoneEvent(
             total_available=total_available,
             total_after_filter=total_after_filter,
             sampled=sampled,
-        ))
+        )))
 
         # Early exit if no hotels found
         if not hotels:
-            yield sse_event(DoneEvent(total_scored=0, hotels=[]))
+            yield sse_event(sse_message(DoneEvent(total_scored=0, hotels=[])))
             return
 
         # Phase 2: Fetch content
-        hids = [h["hid"] for h in hotels]
-        total_batches = (len(hids) + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
-        yield sse_event(BatchGetContentStartEvent(
-            total_hotels=len(hids),
+        hotel_ids = [hotel["hid"] for hotel in hotels]
+        total_batches = (len(hotel_ids) + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
+        yield sse_event(sse_message(BatchGetContentStartEvent(
+            total_hotels=len(hotel_ids),
             total_batches=total_batches,
-        ))
-        content_map = await batch_get_content(etg_client, hids, language)
-        yield sse_event(BatchGetContentDoneEvent(
+        )))
+        content_map = await batch_get_content(etg_client, hotel_ids, language)
+        yield sse_event(sse_message(BatchGetContentDoneEvent(
             hotels_with_content=len(content_map),
-            total_hotels=len(hids),
-        ))
+            total_hotels=len(hotel_ids),
+        )))
 
         # Phase 3: Fetch reviews
-        reviews_batches = (len(hids) + REVIEWS_BATCH_SIZE - 1) // REVIEWS_BATCH_SIZE
-        yield sse_event(BatchGetReviewsStartEvent(
-            total_hotels=len(hids),
-            total_batches=reviews_batches,
-        ))
-        raw_reviews = await batch_get_reviews(etg_client, hids, language)
-        reviews_map = filter_reviews(raw_reviews)
-        yield sse_event(BatchGetReviewsDoneEvent(
+        reviews_batch_count = (len(hotel_ids) + REVIEWS_BATCH_SIZE - 1) // REVIEWS_BATCH_SIZE
+        yield sse_event(sse_message(BatchGetReviewsStartEvent(
+            total_hotels=len(hotel_ids),
+            total_batches=reviews_batch_count,
+        )))
+        reviews_payload = await batch_get_reviews(etg_client, hotel_ids, language)
+        reviews_map = filter_reviews(reviews_payload)
+        yield sse_event(sse_message(BatchGetReviewsDoneEvent(
             hotels_with_reviews=len(reviews_map),
-            total_hotels=len(hids),
-        ))
+            total_hotels=len(hotel_ids),
+        )))
 
         # Phase 4: Presort
-        combined = combine_hotels_data(hotels, content_map, reviews_map)
-        top_hotels = presort_hotels(combined, reviews_map, limit=PRESORT_LIMIT)
+        combined_hotels = combine_hotels_data(hotels, content_map, reviews_map)
+        top_hotels = presort_hotels(combined_hotels, reviews_map, limit=PRESORT_LIMIT)
 
-        yield sse_event(PresortDoneEvent(
-            input_hotels=len(combined),
+        yield sse_event(sse_message(PresortDoneEvent(
+            input_hotels=len(combined_hotels),
             output_hotels=len(top_hotels),
-        ))
+        )))
 
         # Phase 5: LLM Scoring
-        preferences = user_preferences or DEFAULT_PREFERENCES
-        yield sse_event(ScoringStartEvent(
+        scoring_preferences = user_preferences or DEFAULT_PREFERENCES
+        yield sse_event(sse_message(ScoringStartEvent(
             total_hotels=len(top_hotels),
-        ))
+        )))
 
         scoring_result = await score_hotels(
             top_hotels,
-            preferences,
+            scoring_preferences,
             guests=guests,
             min_price=min_price_per_night,
             max_price=max_price_per_night,
@@ -157,26 +158,41 @@ async def search_stream(  # noqa: PLR0915
         )
 
         if scoring_result["error"]:
-            yield sse_event(ErrorEvent(
+            yield sse_event(sse_message(ErrorEvent(
                 error_type="ScoringError",
                 error_message=scoring_result["error"],
-            ))
+            )))
             return
 
-        yield sse_event(ScoringDoneEvent(
+        yield sse_event(sse_message(ScoringDoneEvent(
             scored_count=len(scoring_result["results"]),
             summary=scoring_result["summary"],
-        ))
+        )))
 
         # Finalize and yield results
         scored_hotels = finalize_scored_hotels(top_hotels, scoring_result["results"])
-        yield sse_event(DoneEvent(total_scored=len(scored_hotels), hotels=scored_hotels))
+        yield sse_event(sse_message(DoneEvent(
+            total_scored=len(scored_hotels),
+            hotels=scored_hotels,
+        )))
 
     except ETGAPIError as e:
-        yield sse_event(ErrorEvent(error_type="ETGAPIError", error_message=str(e)))
+        yield sse_event(sse_message(ErrorEvent(
+            error_type="ETGAPIError",
+            error_message=str(e),
+        )))
     except ETGNetworkError as e:
-        yield sse_event(ErrorEvent(error_type="ETGNetworkError", error_message=str(e)))
+        yield sse_event(sse_message(ErrorEvent(
+            error_type="ETGNetworkError",
+            error_message=str(e),
+        )))
     except httpx.HTTPError as e:
-        yield sse_event(ErrorEvent(error_type="HTTPError", error_message=str(e)))
+        yield sse_event(sse_message(ErrorEvent(
+            error_type="HTTPError",
+            error_message=str(e),
+        )))
     except ValidationError as e:
-        yield sse_event(ErrorEvent(error_type="ValidationError", error_message=str(e)))
+        yield sse_event(sse_message(ErrorEvent(
+            error_type="ValidationError",
+            error_message=str(e),
+        )))

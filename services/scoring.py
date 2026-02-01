@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import httpx
-from google.genai.types import ThinkingLevel
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 from config import SCORING_MODEL
+from services.llm_providers import create_agent, estimate_tokens
 
 if TYPE_CHECKING:
     from etg import GuestRoom
@@ -72,6 +70,8 @@ def _load_scoring_prompt() -> str:
     prompt_path = Path(__file__).parent.parent / "prompts" / "hotel_scoring.md"
     return prompt_path.read_text(encoding="utf-8")
 
+SCORING_PROMPT_TEMPLATE = _load_scoring_prompt()
+
 TOP_HOTELS_COUNT = 10
 DEFAULT_RETRIES = 3
 
@@ -93,56 +93,9 @@ def _get_default_model() -> str:
     return SCORING_MODEL
 
 
-def _is_anthropic_model(model_name: str) -> bool:
-    return model_name.startswith("claude-")
-
-
-def estimate_tokens(text: str, model_name: str | None = None) -> int:
-    """Estimate token count for text.
-
-    Uses character-based estimation calibrated per model family:
-    - Gemini: ~4 characters per token (Google documentation)
-    - Claude: ~3.5 characters per token (Anthropic documentation)
-
-    Args:
-        text: Text to count tokens for.
-        model_name: Optional model name for calibrated estimation.
-
-    Returns:
-        Estimated token count.
-    """
-    if model_name is None:
-        model_name = _get_default_model()
-
-    # Calibrated estimation per model family
-    if _is_anthropic_model(model_name):
-        # Claude: ~3.5 chars per token
-        return int(len(text) / 3.5)
-
-    # Gemini: ~4 chars per token (per Google docs)
-    return len(text) // 4
-
-
 def _create_agent(model_name: str | None = None) -> Agent[None, ScoringResponse]:
-    """Create scoring agent with specified model (Gemini or Claude)."""
-    if model_name is None:
-        model_name = _get_default_model()
-
-    if _is_anthropic_model(model_name):
-        anthropic_settings = AnthropicModelSettings(temperature=0.2, timeout=300.0)
-        anthropic_model = AnthropicModel(model_name)
-        agent = Agent(
-            anthropic_model, output_type=ScoringResponse, model_settings=anthropic_settings
-        )
-        return cast("Agent[None, ScoringResponse]", cast("object", agent))
-
-    google_settings = GoogleModelSettings(
-        temperature=0.2,
-        google_thinking_config={"thinking_level": ThinkingLevel.MEDIUM},
-    )
-    google_model = GoogleModel(model_name)
-    agent = Agent(google_model, output_type=ScoringResponse, model_settings=google_settings)
-    return cast("Agent[None, ScoringResponse]", cast("object", agent))
+    """Create scoring agent with specified model."""
+    return create_agent(model_name or _get_default_model(), ScoringResponse)
 
 
 def _to_float(value: Any) -> float | None:
@@ -507,9 +460,15 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
     reviews_meta = _summarize_review_meta(raw_reviews)
 
     reviews_data = {
-        "total_reviews": hr.get("total_reviews", 0) if isinstance(hr, dict) else 0,
-        "avg_rating": hr.get("avg_rating") if isinstance(hr, dict) else None,
-        "detailed_averages": hr.get("detailed_averages", {}) if isinstance(hr, dict) else {},
+        "total_reviews": (
+            hotel_reviews.get("total_reviews", 0) if isinstance(hotel_reviews, dict) else 0
+        ),
+        "avg_rating": (
+            hotel_reviews.get("avg_rating") if isinstance(hotel_reviews, dict) else None
+        ),
+        "detailed_averages": (
+            hotel_reviews.get("detailed_averages", {}) if isinstance(hotel_reviews, dict) else {}
+        ),
         "sample_reviews": reviews_sample,
         "meta": reviews_meta,
     }
@@ -577,8 +536,7 @@ def _build_prompt(  # noqa: PLR0913
     top_count: int,
 ) -> str:
     """Build scoring prompt for hotels."""
-    prompt_template = _load_scoring_prompt()
-    return prompt_template.format(
+    return SCORING_PROMPT_TEMPLATE.format(
         guests_info=_format_guests_info(guests),
         price_range=_format_price_range(min_price, max_price, currency),
         user_preferences=user_preferences,

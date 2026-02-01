@@ -27,6 +27,10 @@ def create_app() -> FastAPI:
 
     etg_client = ETGClient(ETG_KEY_ID, ETG_API_KEY, timeout=ETG_REQUEST_TIMEOUT)
 
+    @app.on_event("shutdown")
+    async def shutdown_event() -> None:
+        await etg_client.close()
+
     @app.get("/")
     async def root() -> dict[str, Any]:
         return {"message": "Hello World"}
@@ -41,20 +45,20 @@ def create_app() -> FastAPI:
 
         regions = [
             RegionItem(
-                id=r["id"],
-                name=r["name"],
-                type=r["type"],
-                country_code=r.get("country_code", ""),
+                id=region["id"],
+                name=region["name"],
+                type=region["type"],
+                country_code=region.get("country_code", ""),
             )
-            for r in raw_regions
+            for region in raw_regions
         ]
 
-        city = next((r for r in regions if r.type == "City"), None)
+        city_region = next((region for region in regions if region.type == "City"), None)
 
         return RegionSuggestResponse(
             query=query,
             regions=regions,
-            city=city,
+            city=city_region,
         )
 
     @app.post("/hotels/search/stream")

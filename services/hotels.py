@@ -98,9 +98,9 @@ def combine_hotels_data(
 
     combined: list[HotelFull] = []
     for hotel in hotels:
-        hid = hotel["hid"]
-        content = content_map.get(hid)
-        reviews = reviews_map.get(hid, empty_reviews)
+        hotel_hid = hotel["hid"]
+        content = content_map.get(hotel_hid)
+        reviews = reviews_map.get(hotel_hid, empty_reviews)
 
         hotel_data: dict[str, Any] = {**hotel, "reviews": reviews}
         if content:
@@ -150,9 +150,9 @@ def _parse_daily_prices(daily_prices: list[str]) -> list[float]:
         List of valid positive prices.
     """
     prices = []
-    for p in daily_prices:
+    for price_str in daily_prices:
         try:
-            price = float(p)
+            price = float(price_str)
             if price > 0:
                 prices.append(price)
         except (ValueError, TypeError):
@@ -251,14 +251,14 @@ def sample_hotels(
 
 async def batch_get_content(
     client: ETGClient,
-    hids: list[int],
+    hotel_ids: list[int],
     language: str,
 ) -> dict[int, HotelContent]:
     """Fetch hotel content in batches.
 
     Args:
         client: ETG API client.
-        hids: List of hotel IDs to fetch content for.
+        hotel_ids: List of hotel IDs to fetch content for.
         language: Response language code.
 
     Returns:
@@ -266,10 +266,10 @@ async def batch_get_content(
     """
     content_map: dict[int, HotelContent] = {}
 
-    for i in range(0, len(hids), CONTENT_BATCH_SIZE):
-        batch = hids[i : i + CONTENT_BATCH_SIZE]
+    for i in range(0, len(hotel_ids), CONTENT_BATCH_SIZE):
+        hotel_id_batch = hotel_ids[i : i + CONTENT_BATCH_SIZE]
         try:
-            content = await client.get_hotel_content(hids=batch, language=language)
+            content = await client.get_hotel_content(hids=hotel_id_batch, language=language)
             for hotel in content:
                 content_map[hotel["hid"]] = hotel
         except ETGAPIError:
@@ -339,12 +339,12 @@ def presort_hotels(
     """
     # Calculate prescore and tier for each hotel
     scored: list[_ScoredHotel] = []
-    for htl in hotels:
-        hid = htl.get("hid")
-        reviews_data = reviews_map.get(hid) if hid else None
-        prescore = calculate_prescore(htl, reviews_data)
-        tier = _get_hotel_tier(htl)
-        scored.append({"hotel": htl, "prescore": prescore, "tier": tier})
+    for hotel in hotels:
+        hotel_hid = hotel.get("hid")
+        reviews_data = reviews_map.get(hotel_hid) if hotel_hid else None
+        prescore = calculate_prescore(hotel, reviews_data)
+        tier = _get_hotel_tier(hotel)
+        scored.append({"hotel": hotel, "prescore": prescore, "tier": tier})
 
     # Group by tier
     tiers: dict[int, list[_ScoredHotel]] = {1: [], 2: [], 3: [], 4: []}

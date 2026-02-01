@@ -164,8 +164,8 @@ class ETGClient:
             raise ETGAPIInvalidJsonError(e) from e
 
         if data.get("status") != "ok" and data.get("error"):
-            error_info = data.get("error", {})
-            raise ETGAPIResponseError(error_info)
+            error_payload = data.get("error", {})
+            raise ETGAPIResponseError(error_payload)
 
         return data
 
@@ -244,20 +244,20 @@ class ETGClient:
 
     async def get_hotel_reviews(
         self,
-        hids: list[int],
+        hotel_ids: list[int],
         language: str = "en",
     ) -> list[HotelReviews]:
         """Get reviews for hotels by their numeric IDs.
 
         Args:
-            hids: List of hotel numeric IDs.
+            hotel_ids: List of hotel numeric IDs.
             language: Review language code.
 
         Returns:
             List of hotel reviews data.
         """
         payload: dict[str, Any] = {
-            "hids": hids,
+            "hids": hotel_ids,
             "language": language,
         }
         response = await self._request(
@@ -270,20 +270,20 @@ class ETGClient:
 
     async def get_hotel_content(
         self,
-        hids: list[int],
+        hotel_ids: list[int],
         language: str = "en",
     ) -> list[HotelContent]:
         """Get content for hotels by their numeric IDs.
 
         Args:
-            hids: List of hotel numeric IDs.
+            hotel_ids: List of hotel numeric IDs.
             language: Content language code.
 
         Returns:
             List of hotel content data.
         """
         payload: dict[str, Any] = {
-            "hids": hids,
+            "hids": hotel_ids,
             "language": language,
         }
         response = await self._request(
