@@ -75,12 +75,12 @@ def _load_scoring_prompt() -> str:
 TOP_HOTELS_COUNT = 10
 DEFAULT_RETRIES = 3
 
-MAX_RATES_PER_HOTEL = 12
-MAX_REVIEWS_PER_HOTEL = 20
-MAX_AMENITIES_PER_HOTEL = 60
-REVIEW_TEXT_MAX_LENGTH = 200
-MAX_DESCRIPTION_PARAGRAPH_LENGTH = 400
-MAX_POLICY_PARAGRAPH_LENGTH = 400
+MAX_RATES_PER_HOTEL = 1
+MAX_REVIEWS_PER_HOTEL = 12
+MAX_AMENITIES_PER_HOTEL = 40
+REVIEW_TEXT_MAX_LENGTH = 80
+MAX_DESCRIPTION_PARAGRAPH_LENGTH = 250
+MAX_POLICY_PARAGRAPH_LENGTH = 250
 
 
 # =============================================================================
@@ -173,16 +173,6 @@ def _trim_paragraphs(paragraphs: list[str], max_len: int) -> list[str]:
     return trimmed
 
 
-def _summarize_images(images_ext: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for img in images_ext:
-        cat = img.get("category_slug")
-        if not isinstance(cat, str) or not cat:
-            continue
-        counts[cat] = counts.get(cat, 0) + 1
-    return counts
-
-
 def _flatten_amenities(amenity_groups: list[dict[str, Any]]) -> list[str]:
     seen: set[str] = set()
     flat: list[str] = []
@@ -196,6 +186,48 @@ def _flatten_amenities(amenity_groups: list[dict[str, Any]]) -> list[str]:
                 seen.add(name)
                 flat.append(name)
     return flat
+
+
+def _summarize_amenities(amenities: list[str], room_groups_summary: dict[str, Any]) -> dict[str, bool]:
+    def has_any(text: str, keywords: list[str]) -> bool:
+        return any(keyword in text for keyword in keywords)
+
+    has_parking = False
+    has_pool = False
+    has_gym = False
+    has_kitchen = False
+    has_family = False
+    has_wifi = False
+
+    for item in amenities:
+        if not isinstance(item, str) or not item:
+            continue
+        text = item.lower().replace("ё", "е")
+
+        if not has_parking and has_any(text, ["parking", "парковк"]):
+            has_parking = True
+        if not has_pool and has_any(text, ["pool", "бассейн"]):
+            has_pool = True
+        if not has_gym and has_any(text, ["gym", "fitness", "спортзал", "тренажер"]):
+            has_gym = True
+        if not has_kitchen and has_any(text, ["kitchen", "кухн"]):
+            has_kitchen = True
+        if not has_family and has_any(text, ["family", "семейн"]):
+            has_family = True
+        if not has_wifi and has_any(text, ["wifi", "wi-fi", "wi fi", "интернет"]):
+            has_wifi = True
+
+    if room_groups_summary.get("has_family"):
+        has_family = True
+
+    return {
+        "has_parking": has_parking,
+        "has_pool": has_pool,
+        "has_gym": has_gym,
+        "has_kitchen": has_kitchen,
+        "has_family_rooms": has_family,
+        "has_wifi": has_wifi,
+    }
 
 
 def _build_rate_info(rate: dict[str, Any]) -> dict[str, Any]:
@@ -218,15 +250,10 @@ def _build_rate_info(rate: dict[str, Any]) -> dict[str, Any]:
     cancellation = payment.get("cancellation_penalties", {}) or {}
     free_cancel_before = cancellation.get("free_cancellation_before")
 
-    taxes = (payment.get("tax_data", {}) or {}).get("taxes", []) or []
-
     rate_info: dict[str, Any] = {
         "match_hash": rate.get("match_hash", ""),
-        "search_hash": rate.get("search_hash"),
-        "room": (rate.get("room_name") or "")[:120],
         "room_info": (rate.get("room_name_info") or "")[:200],
-        "room_data_trans": rate.get("room_data_trans", {}),
-        "rg_ext": rg_ext,
+        # room_data_trans is verbose; rely on room name + room_info instead
         "capacity": rg_ext.get("capacity"),
         "bedrooms": rg_ext.get("bedrooms"),
         "meal": meal_data.get("value", rate.get("meal", "")),
@@ -236,31 +263,20 @@ def _build_rate_info(rate: dict[str, Any]) -> dict[str, Any]:
         "total_price": total_price,
         "avg_price_per_night": avg_price_per_night,
         "currency": currency,
-        "price": f"{total_price:.0f} {currency}" if total_price and currency else None,
         "payment": {
-            "type": payment.get("type"),
-            "by": payment.get("by"),
-            "amount": payment.get("amount"),
-            "show_amount": payment.get("show_amount"),
-            "currency_code": payment.get("currency_code"),
-            "show_currency_code": payment.get("show_currency_code"),
             "is_need_credit_card_data": payment.get("is_need_credit_card_data"),
-            "is_need_cvc": payment.get("is_need_cvc"),
         },
         "cancellation": {
             "free_cancel_before": free_cancel_before,
-            "policies": cancellation.get("policies", []) or [],
         },
         "has_free_cancel": bool(free_cancel_before),
-        "taxes": taxes,
         "amenities_data": rate.get("amenities_data", []) or [],
-        "serp_filters": rate.get("serp_filters", []) or [],
         "any_residency": rate.get("any_residency"),
         "allotment": rate.get("allotment"),
         "deposit": rate.get("deposit"),
         "is_package": rate.get("is_package"),
         "legal_info": rate.get("legal_info"),
-        "no_show": rate.get("no_show"),
+        "has_no_show": bool(rate.get("no_show")),
     }
 
     return rate_info
@@ -321,72 +337,119 @@ def _summarize_rates(rates: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _summarize_room_groups(room_groups: list[dict[str, Any]]) -> dict[str, Any]:
+    max_capacity = None
+    max_bedrooms = None
+    has_family = False
+    has_suite = False
+    has_apartment = False
+    names: list[str] = []
+    amenities: list[str] = []
+    seen_names: set[str] = set()
+    seen_amenities: set[str] = set()
+
+    for rg in room_groups:
+        name = rg.get("name")
+        if isinstance(name, str) and name:
+            if name not in seen_names:
+                seen_names.add(name)
+                names.append(name)
+
+            lname = name.lower()
+            if "family" in lname or "семей" in lname:
+                has_family = True
+            if "suite" in lname or "люкс" in lname:
+                has_suite = True
+            if "apartment" in lname or "апартамент" in lname:
+                has_apartment = True
+
+        rg_ext = rg.get("rg_ext", {}) or {}
+        capacity = rg_ext.get("capacity")
+        bedrooms = rg_ext.get("bedrooms")
+        if isinstance(capacity, int | float):
+            max_capacity = capacity if max_capacity is None else max(max_capacity, capacity)
+        if isinstance(bedrooms, int | float):
+            max_bedrooms = bedrooms if max_bedrooms is None else max(max_bedrooms, bedrooms)
+
+        for amenity in rg.get("room_amenities", []) or []:
+            if not isinstance(amenity, str) or not amenity:
+                continue
+            if amenity in seen_amenities:
+                continue
+            seen_amenities.add(amenity)
+            amenities.append(amenity)
+
+    return {
+        "max_capacity": max_capacity,
+        "max_bedrooms": max_bedrooms,
+        "has_family": has_family,
+        "has_suite": has_suite,
+        "has_apartment": has_apartment,
+        "top_room_names": names[:1],
+        "top_room_amenities": amenities[:8],
+    }
+
+
+def _summarize_facts(facts: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "year_built": facts.get("year_built"),
+        "year_renovated": facts.get("year_renovated"),
+        "rooms_number": facts.get("rooms_number"),
+        "floors_number": facts.get("floors_number"),
+    }
+
+
 def _select_rates(rates: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    if len(rates) <= limit:
-        return rates
+    if not rates:
+        return []
+    if limit <= 1:
+        return [min(rates, key=_rate_price_key)]
+    return sorted(rates, key=_rate_price_key)[:limit]
 
-    def price_key(r: dict[str, Any]) -> float:
-        return r.get("total_price") if isinstance(r.get("total_price"), (int, float)) else 1e18
 
-    selected: list[dict[str, Any]] = []
-    seen: set[str] = set()
+def _rate_price_key(rate: dict[str, Any]) -> float:
+    total = rate.get("total_price")
+    if isinstance(total, int | float) and total > 0:
+        return float(total)
+    avg = rate.get("avg_price_per_night")
+    if isinstance(avg, int | float) and avg > 0:
+        return float(avg)
+    return 1e18
 
-    def add_rate(r: dict[str, Any]) -> None:
-        match_hash = r.get("match_hash")
-        if not isinstance(match_hash, str) or not match_hash:
-            return
-        if match_hash in seen:
-            return
-        seen.add(match_hash)
-        selected.append(r)
 
-    # Cheapest rates
-    for r in sorted(rates, key=price_key)[:4]:
-        add_rate(r)
-
-    # Cheapest with breakfast
-    breakfast = [r for r in rates if r.get("has_breakfast")]
-    for r in sorted(breakfast, key=price_key)[:2]:
-        add_rate(r)
-
-    # Cheapest with free cancel
-    free_cancel = [r for r in rates if r.get("has_free_cancel")]
-    for r in sorted(free_cancel, key=price_key)[:2]:
-        add_rate(r)
-
-    # Highest capacity / bedrooms
-    for r in sorted(rates, key=lambda x: (x.get("capacity") or 0), reverse=True)[:2]:
-        add_rate(r)
-    for r in sorted(rates, key=lambda x: (x.get("bedrooms") or 0), reverse=True)[:2]:
-        add_rate(r)
-
-    if len(selected) < limit:
-        for r in sorted(rates, key=price_key):
-            add_rate(r)
-            if len(selected) >= limit:
-                break
-
-    return selected[:limit]
+def _review_date_key(review: dict[str, Any]) -> str:
+    created = review.get("created")
+    if isinstance(created, str):
+        return created[:10]
+    return ""
 
 
 def _build_review_sample(raw_reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    negatives: list[dict[str, Any]] = []
+    positives: list[dict[str, Any]] = []
+
+    for r in raw_reviews:
+        minus = (r.get("review_minus") or "").strip()
+        if minus:
+            negatives.append(r)
+        else:
+            positives.append(r)
+
+    negatives.sort(key=_review_date_key, reverse=True)
+    positives.sort(key=_review_date_key, reverse=True)
+
+    max_pos = 2
+    selected = negatives[: max(0, MAX_REVIEWS_PER_HOTEL - max_pos)]
+    selected.extend(positives[:max_pos])
+
     sample: list[dict[str, Any]] = []
-    for r in raw_reviews[:MAX_REVIEWS_PER_HOTEL]:
+    for r in selected[:MAX_REVIEWS_PER_HOTEL]:
         sample.append(
             {
-                "id": r.get("id"),
                 "rating": r.get("rating"),
                 "created": (r.get("created") or "")[:10],
-                "traveller_type": r.get("traveller_type"),
-                "trip_type": r.get("trip_type"),
-                "adults": r.get("adults"),
-                "children": r.get("children"),
-                "nights": r.get("nights"),
-                "room_name": (r.get("room_name") or "")[:120],
                 "plus": (r.get("review_plus") or "")[:REVIEW_TEXT_MAX_LENGTH],
                 "minus": (r.get("review_minus") or "")[:REVIEW_TEXT_MAX_LENGTH],
-                "detailed_review": r.get("detailed_review", {}) or {},
-                "lang": r.get("_lang"),
             }
         )
     return sample
@@ -433,43 +496,10 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
     amenities_flat = _flatten_amenities(amenity_groups)
 
     room_groups = hotel.get("room_groups", []) or []
-    room_groups_light = [
-        {
-            "room_group_id": rg.get("room_group_id"),
-            "name": rg.get("name"),
-            "name_struct": rg.get("name_struct"),
-            "room_amenities": rg.get("room_amenities", []) or [],
-            "rg_ext": rg.get("rg_ext", {}) or {},
-        }
-        for rg in room_groups
-    ]
+    room_groups_summary = _summarize_room_groups(room_groups)
+    amenities_summary = _summarize_amenities(amenities_flat, room_groups_summary)
 
-    description_struct = hotel.get("description_struct", []) or []
-    description_trimmed = []
-    for block in description_struct:
-        if not isinstance(block, dict):
-            continue
-        description_trimmed.append(
-            {
-                "title": block.get("title"),
-                "paragraphs": _trim_paragraphs(block.get("paragraphs", []) or [], MAX_DESCRIPTION_PARAGRAPH_LENGTH),
-            }
-        )
-
-    policy_struct = hotel.get("policy_struct", []) or []
-    policy_trimmed = []
-    for block in policy_struct:
-        if not isinstance(block, dict):
-            continue
-        policy_trimmed.append(
-            {
-                "title": block.get("title"),
-                "paragraphs": _trim_paragraphs(block.get("paragraphs", []) or [], MAX_POLICY_PARAGRAPH_LENGTH),
-            }
-        )
-
-    images_ext = hotel.get("images_ext", []) or []
-    images_summary = _summarize_images(images_ext)
+    facts_summary = _summarize_facts(hotel.get("facts", {}) or {})
 
     hr = hotel.get("reviews", {}) or {}
     raw_reviews = hr.get("reviews", []) if isinstance(hr, dict) else []
@@ -491,33 +521,18 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         "stars": hotel.get("star_rating", 0),
         "kind": hotel.get("kind", ""),
         "hotel_chain": hotel.get("hotel_chain"),
-        "address": hotel.get("address", ""),
-        "postal_code": hotel.get("postal_code"),
         "region": hotel.get("region", {}) or {},
         "latitude": hotel.get("latitude"),
         "longitude": hotel.get("longitude"),
-        "phone": hotel.get("phone"),
-        "email": hotel.get("email"),
         "check_in_time": hotel.get("check_in_time"),
         "check_out_time": hotel.get("check_out_time"),
-        "front_desk_time_start": hotel.get("front_desk_time_start"),
-        "front_desk_time_end": hotel.get("front_desk_time_end"),
-        "is_closed": hotel.get("is_closed"),
-        "deleted": hotel.get("deleted"),
-        "is_gender_specification_required": hotel.get("is_gender_specification_required"),
         "payment_methods": hotel.get("payment_methods", []) or [],
         "star_certificate": hotel.get("star_certificate", {}) or {},
-        "facts": hotel.get("facts", {}) or {},
-        "serp_filters": hotel.get("serp_filters", []) or [],
-        "description": description_trimmed,
-        "policy_struct": policy_trimmed,
+        "facts_summary": facts_summary,
         "metapolicy_struct": hotel.get("metapolicy_struct", {}) or {},
-        "metapolicy_extra_info": hotel.get("metapolicy_extra_info", ""),
         "keys_pickup": hotel.get("keys_pickup", {}) or {},
-        "amenity_groups": amenity_groups,
-        "amenities": amenities_flat[:MAX_AMENITIES_PER_HOTEL],
-        "room_groups": room_groups_light,
-        "images_summary": images_summary,
+        "amenities_summary": amenities_summary,
+        "room_groups_summary": room_groups_summary,
         "rates": rates_info,
         "rates_summary": rates_summary,
         "reviews": reviews_data,
