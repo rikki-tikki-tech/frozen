@@ -406,9 +406,16 @@ class RegisterFacts(TypedDict):
     name: str
     phone: str
     record: str
-    rooms: list[dict[str, str]]
+    rooms: list["RegisterRoom"]
     status: str
     status_end_date: str
+
+
+class RegisterRoom(TypedDict):
+    """Registration room category information."""
+
+    rooms_count: int
+    category_type: str
 
 
 class HotelFacts(TypedDict):
@@ -417,7 +424,7 @@ class HotelFacts(TypedDict):
     electricity: ElectricityFacts
     floors_number: int
     kind: HotelKind
-    register: RegisterFacts
+    register: RegisterFacts | None
     rooms_number: int
     star_rating: int
     type: str
@@ -428,19 +435,19 @@ class HotelFacts(TypedDict):
 class KeysPickup(TypedDict):
     """Keys pickup information."""
 
-    apartment_extra_information: str
-    apartment_office_address: str
-    email: str
-    is_contactless: bool
-    phone: str
-    type: str
+    apartment_extra_information: str | None
+    apartment_office_address: str | None
+    email: str | None
+    is_contactless: bool | None
+    phone: str | None
+    type: str | None
 
 
 class StarCertificate(TypedDict):
     """Star certificate information."""
 
-    certificate_id: str
-    valid_to: str
+    certificate_id: str | None
+    valid_to: str | None
 
 
 class HotelContent(TypedDict):
@@ -457,24 +464,24 @@ class HotelContent(TypedDict):
     deleted: NotRequired[bool]
     is_closed: NotRequired[bool]
     is_gender_specification_required: NotRequired[bool]
-    phone: NotRequired[str]
-    email: NotRequired[str]
-    postal_code: NotRequired[str]
-    hotel_chain: NotRequired[str]
-    check_in_time: NotRequired[str]
-    check_out_time: NotRequired[str]
-    front_desk_time_start: NotRequired[str]
-    front_desk_time_end: NotRequired[str]
+    phone: NotRequired[str | None]
+    email: NotRequired[str | None]
+    postal_code: NotRequired[str | None]
+    hotel_chain: NotRequired[str | None]
+    check_in_time: NotRequired[str | None]
+    check_out_time: NotRequired[str | None]
+    front_desk_time_start: NotRequired[str | None]
+    front_desk_time_end: NotRequired[str | None]
     description_struct: NotRequired[list[DescriptionParagraph]]
     policy_struct: NotRequired[list[PolicyParagraph]]
     amenity_groups: NotRequired[list[AmenityGroup]]
     images_ext: NotRequired[list[ImageExt]]
     room_groups: NotRequired[list[RoomGroup]]
     region: NotRequired[RegionInfo]
-    metapolicy_struct: NotRequired[MetapolicyStruct]
-    metapolicy_extra_info: NotRequired[str]
-    payment_methods: NotRequired[list[str]]
-    facts: NotRequired[HotelFacts]
-    keys_pickup: NotRequired[KeysPickup]
-    star_certificate: NotRequired[StarCertificate]
-    serp_filters: NotRequired[list[str]]
+    metapolicy_struct: NotRequired[MetapolicyStruct | None]
+    metapolicy_extra_info: NotRequired[str | None]
+    payment_methods: NotRequired[list[str] | None]
+    facts: NotRequired[HotelFacts | None]
+    keys_pickup: NotRequired[KeysPickup | None]
+    star_certificate: NotRequired[StarCertificate | None]
+    serp_filters: NotRequired[list[str] | None]

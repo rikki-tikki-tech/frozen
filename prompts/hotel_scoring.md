@@ -36,8 +36,8 @@ Guest reviews are the ultimate truth detector.
 A $200 Tier 1 (Resort) is better than a $100 Tier 4 (Hostel). Award higher scores to high-tier properties if the price is reasonable.
 
 **D. Preference Matching**
-- **Boost:** Points for explicit amenities (e.g., User: "pool" -> Hotel: "has pool").
-- **Penalty:** Deductions for missing explicit needs.
+- **Boost:** Points for explicit amenities (e.g., User: "pool" -> Hotel has pool). Use `amenity_groups`, `amenities`, and `room_groups[].room_amenities`.
+- **Penalty:** Deductions for missing explicit needs. Consider `metapolicy_struct` (parking, pets, extra_bed, meal, internet, children) when relevant.
 
 ## 3. Field Content Guidelines
 Generate the response based on the provided schema. Follow these specific instructions:
@@ -49,13 +49,15 @@ The unique identifier of the hotel from the input data.
 **CRITICAL REQUIREMENT:** Each hotel has a `rates` array. Each rate has a `match_hash` field.
 
 **Your task:**
-1. Look at ALL rates for the hotel in the `rates` array
-2. Each rate has: `match_hash`, `room`, `price`, `meal`, `has_breakfast`, optionally `free_cancel_before`
+1. Look at all provided rates for the hotel in the `rates` array (and use `rates_summary` for market context).
+2. Each rate includes (non-exhaustive): `match_hash`, `room`, `room_info`, `room_data_trans`, `rg_ext` (capacity/bedrooms),
+   `total_price`, `avg_price_per_night`, `currency`, `price`, `meal`, `has_breakfast`, `has_free_cancel`,
+   `cancellation.free_cancel_before`, `cancellation.policies`, `payment`, `amenities_data`, `serp_filters`.
 3. Select the BEST rate based on:
-   - **Room suitability:** Can accommodate all guests (check adults + children counts)
+   - **Room suitability:** Can accommodate all guests (use `rg_ext.capacity`, `rg_ext.bedrooms`, and room names; check adults + children counts)
    - **Meal preferences:** If user wants breakfast, pick rate with `has_breakfast: true`
-   - **Cancellation:** Prefer `free_cancel_before` when available
-   - **Value:** Balance price with amenities (slightly pricier with breakfast may be better value)
+   - **Cancellation:** Prefer `has_free_cancel` and `cancellation.free_cancel_before` when available
+   - **Value:** Balance price with amenities/room quality (slightly pricier with breakfast or larger rooms may be better value)
 
 **CRITICAL:** Copy the EXACT `match_hash` string from the selected rate. Do NOT make up or modify this value.
 **If no suitable rate exists or rates array is empty, return `null`.**
