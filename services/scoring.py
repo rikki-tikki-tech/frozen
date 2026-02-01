@@ -460,15 +460,9 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
     reviews_meta = _summarize_review_meta(raw_reviews)
 
     reviews_data = {
-        "total_reviews": (
-            hotel_reviews.get("total_reviews", 0) if isinstance(hotel_reviews, dict) else 0
-        ),
-        "avg_rating": (
-            hotel_reviews.get("avg_rating") if isinstance(hotel_reviews, dict) else None
-        ),
-        "detailed_averages": (
-            hotel_reviews.get("detailed_averages", {}) if isinstance(hotel_reviews, dict) else {}
-        ),
+        "total_reviews": hr.get("total_reviews", 0) if isinstance(hr, dict) else 0,
+        "avg_rating": hr.get("avg_rating") if isinstance(hr, dict) else None,
+        "detailed_averages": hr.get("detailed_averages", {}) if isinstance(hr, dict) else {},
         "sample_reviews": reviews_sample,
         "meta": reviews_meta,
     }
@@ -480,6 +474,7 @@ def prepare_hotel_for_llm(hotel: HotelFull) -> dict[str, Any]:
         "stars": hotel.get("star_rating", 0),
         "kind": hotel.get("kind", ""),
         "hotel_chain": hotel.get("hotel_chain"),
+        "address": hotel.get("address", ""),
         "region": hotel.get("region", {}) or {},
         "latitude": hotel.get("latitude"),
         "longitude": hotel.get("longitude"),
