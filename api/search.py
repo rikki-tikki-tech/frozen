@@ -39,6 +39,8 @@ from .schemas import HotelSearchRequest
 
 DEFAULT_PREFERENCES = "Лучшее соотношение цены и качества, хорошие отзывы, удобное расположение"
 PRESORT_LIMIT = 100
+MAX_REVIEWS_PER_HOTEL = 30
+REVIEW_TEXT_MAX_LENGTH = 100
 
 
 async def search_stream(  # noqa: PLR0915
@@ -152,6 +154,8 @@ async def search_stream(  # noqa: PLR0915
             top_hotels,
             scoring_preferences,
             guests=guests,
+            max_reviews=MAX_REVIEWS_PER_HOTEL,
+            review_text_max_length=REVIEW_TEXT_MAX_LENGTH,
             min_price=min_price_per_night,
             max_price=max_price_per_night,
             currency=currency,

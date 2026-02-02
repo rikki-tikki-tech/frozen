@@ -78,7 +78,7 @@ async def batch_get_reviews(
             for i in range(0, len(hotel_ids), REVIEWS_BATCH_SIZE):
                 hotel_id_batch = hotel_ids[i : i + REVIEWS_BATCH_SIZE]
                 hotel_reviews_batch = await client.get_hotel_reviews(
-                    hids=hotel_id_batch,
+                    hotel_ids=hotel_id_batch,
                     language=language_code,
                 )
 

@@ -9,11 +9,14 @@ from .hotels import (
     calculate_prescore,
     combine_hotels_data,
     filter_hotels_by_price,
+    filter_rates_by_price,
     finalize_scored_hotels,
     get_hotel_price_per_night,
+    get_rate_price_per_night,
     presort_hotels,
     sample_hotels,
 )
+from .llm_providers import estimate_tokens
 from .reviews import (
     REVIEWS_BATCH_SIZE,
     DetailedAverages,
@@ -21,7 +24,6 @@ from .reviews import (
     batch_get_reviews,
     filter_reviews,
 )
-from .llm_providers import estimate_tokens
 from .scoring import (
     HotelScoreDict,
     ScoringResultDict,
@@ -45,9 +47,11 @@ __all__ = [
     "combine_hotels_data",
     "estimate_tokens",
     "filter_hotels_by_price",
+    "filter_rates_by_price",
     "filter_reviews",
     "finalize_scored_hotels",
     "get_hotel_price_per_night",
+    "get_rate_price_per_night",
     "prepare_hotel_for_llm",
     "presort_hotels",
     "sample_hotels",
