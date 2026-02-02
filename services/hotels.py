@@ -160,6 +160,23 @@ def _parse_daily_prices(daily_prices: list[str]) -> list[float]:
     return prices
 
 
+def get_rate_price_per_night(rate: HotelRate) -> float | None:
+    """Calculate average price per night from rate's daily_prices.
+
+    Args:
+        rate: Hotel rate data.
+
+    Returns:
+        Average price per night or None if not available.
+    """
+    daily_prices = rate.get("daily_prices", [])
+    prices = _parse_daily_prices(daily_prices)
+    if not prices:
+        return None
+
+    return sum(prices) / len(prices)
+
+
 def get_hotel_price_per_night(hotel: Hotel) -> float | None:
     """Extract average price per night from cheapest rate's daily_prices.
 
@@ -185,13 +202,7 @@ def get_hotel_price_per_night(hotel: Hotel) -> float | None:
     if cheapest_rate is None:
         return None
 
-    # Calculate average daily price
-    daily_prices = cheapest_rate.get("daily_prices", [])
-    prices = _parse_daily_prices(daily_prices)
-    if not prices:
-        return None
-
-    return sum(prices) / len(prices)
+    return get_rate_price_per_night(cheapest_rate)
 
 
 def filter_hotels_by_price(
@@ -213,6 +224,38 @@ def filter_hotels_by_price(
         if max_price_per_night is not None and price_per_night > max_price_per_night:
             continue
         filtered.append(hotel)
+
+    return filtered
+
+
+def filter_rates_by_price(
+    rates: list[HotelRate],
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> list[HotelRate]:
+    """Filter rates by price per night range.
+
+    Args:
+        rates: List of hotel rates.
+        min_price: Minimum price per night (or None).
+        max_price: Maximum price per night (or None).
+
+    Returns:
+        Filtered list of rates.
+    """
+    if min_price is None and max_price is None:
+        return rates
+
+    filtered: list[HotelRate] = []
+    for rate in rates:
+        price_per_night = get_rate_price_per_night(rate)
+        if price_per_night is None:
+            continue
+        if min_price is not None and price_per_night < min_price:
+            continue
+        if max_price is not None and price_per_night > max_price:
+            continue
+        filtered.append(rate)
 
     return filtered
 
@@ -269,7 +312,7 @@ async def batch_get_content(
     for i in range(0, len(hotel_ids), CONTENT_BATCH_SIZE):
         hotel_id_batch = hotel_ids[i : i + CONTENT_BATCH_SIZE]
         try:
-            content = await client.get_hotel_content(hids=hotel_id_batch, language=language)
+            content = await client.get_hotel_content(hotel_ids=hotel_id_batch, language=language)
             for hotel in content:
                 content_map[hotel["hid"]] = hotel
         except ETGAPIError:
