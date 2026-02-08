@@ -122,11 +122,10 @@ class ScoringStartEvent(SSEBaseEvent):
 
 
 class ScoringDoneEvent(SSEBaseEvent):
-    """Scoring completed with summary."""
+    """Scoring completed."""
 
     event_type: ClassVar[EventType] = EventType.SCORING_DONE
     scored_count: int
-    summary: str
 
 
 class ErrorEvent(SSEBaseEvent):

@@ -170,7 +170,6 @@ async def search_stream(  # noqa: PLR0915
 
         yield sse_event(sse_message(ScoringDoneEvent(
             scored_count=len(scoring_result["results"]),
-            summary=scoring_result["summary"],
         )))
 
         # Finalize and yield results
