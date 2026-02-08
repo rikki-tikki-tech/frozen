@@ -38,6 +38,7 @@ HOTEL_KIND_TIERS: dict[HotelKind, int] = {
     "Unspecified": 4,
 }
 DEFAULT_KIND_TIER = 4
+MIN_RATING_THRESHOLD = 3.0
 
 
 class HotelFull(HotelContent):
@@ -388,6 +389,17 @@ def presort_hotels(
         prescore = calculate_prescore(hotel, reviews_data)
         tier = _get_hotel_tier(hotel)
         scored.append({"hotel": hotel, "prescore": prescore, "tier": tier})
+
+    # If over limit, drop hotels with low rating first
+    if len(scored) > limit:
+        filtered: list[_ScoredHotel] = []
+        for item in scored:
+            hid = item["hotel"].get("hid", 0)
+            reviews_data = reviews_map.get(hid)
+            avg_rating = reviews_data.get("avg_rating") if reviews_data else None
+            if avg_rating is None or avg_rating >= MIN_RATING_THRESHOLD:
+                filtered.append(item)
+        scored = filtered
 
     # Group by tier
     tiers: dict[int, list[_ScoredHotel]] = {1: [], 2: [], 3: [], 4: []}

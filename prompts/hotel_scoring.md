@@ -14,8 +14,7 @@ CRITICAL OUTPUT REQUIREMENT:
       "score_penalties": ["string", "..."],
       "selected_rate_hash": "string or null"
     }}
-  ],
-  "summary": "string"
+  ]
 }}
 - Do NOT include any extra fields or commentary outside JSON.
 
@@ -36,14 +35,25 @@ Each hotel contains:
 - **Search filters**: serp_filters (property characteristics)
 
 ## Decision Strategy (High Level)
-1. Fit first: the hotel must be able to accommodate the guest group and must meet explicit user requirements.
-2. Quality next: prioritize high guest ratings and consistent review sub-scores.
-3. Value for money: prefer better quality at a reasonable price, not the cheapest.
-4. Tier/type bias: prefer higher-tier property types when price and quality are comparable.
-5. Penalize risk: missing data, low ratings, restrictive policies, or poor review volume.
+1. **Fit first**: the hotel must be able to accommodate the guest group and must meet explicit user requirements.
+2. **High rating CRITICAL**: avg_rating must be 9.0+ for top scores. Rating below 9.5 gets penalties.
+3. **Cleanness is paramount**: reviews.detailed_averages.cleanness is the MOST important sub-score.
+4. **Amenities matching**: if user mentions specific requirements (pool, parking, kitchen, etc.), these are MANDATORY. Missing them = severe penalty.
+5. **Property type/tier**: prefer higher-tier accommodation types (Resort > Hotel > Apartment > Hostel).
+6. **Price sweet spot**: favor mid-range prices from user's budget. Extremely cheap AND extremely expensive both get penalties.
+7. **Location**: consider distance to center/attractions (use detailed_averages.location score and address).
+8. **Penalize risk**: missing data, low ratings, restrictive policies, or poor review volume.
 
 ## Scoring Guidelines
-Use a 0-100 scale. Use the ranges below as guardrails.
+Use a 0-100 scale. Apply ALL criteria below. Penalties and bonuses stack.
+
+**Score Ranges:**
+- **90-100**: EXCEPTIONAL - avg_rating 9.5+, cleanness 9.5+, mid-price range, all amenities, great location
+- **80-89**: Excellent - avg_rating 9.0-9.5, cleanness 9.0+, decent price, most amenities
+- **70-79**: Good - avg_rating 8.5-9.0, cleanness 8.5+, some amenities
+- **60-69**: Acceptable - avg_rating 8.0-8.5, cleanness 8.0+, basic amenities
+- **40-59**: Weak - avg_rating 7.0-8.0, or significant mismatches
+- **0-39**: Reject - poor rating (<7.0), wrong type, or critical requirements missing
 
 ### A) Guest Fit (Hard Constraint)
 - Analyze rate.room_name to infer accommodation capacity (e.g., "Четырёхместный", "Семейный", "Suite", "Two Bedroom").
@@ -52,53 +62,184 @@ Use a 0-100 scale. Use the ranges below as guardrails.
 - If no rate seems suitable for the guest count (e.g., 2 adults + 2 children need 4-person room), apply severe penalty (-40 or more).
 - When uncertain about fit, prefer properties with larger/family room types and favor higher stars.
 
-### B) Guest Reviews (Quality Assurance)
-- reviews.avg_rating is the strongest quality signal (scale 0-10).
-- If avg_rating < 7.0: severe penalty (low satisfaction).
-- If avg_rating < 8.0: the hotel cannot score above 85.
-- If 4-5 star with avg_rating < 7.0: "quality trap" penalty (-40).
-- Use reviews.detailed_averages (cleanness, location, room, services, price, meal, wifi, hygiene) to reinforce/penalize.
-- Analyze individual reviews.reviews[] for specific positive/negative patterns (plus/minus text).
-- Low reviews.total_reviews (< 10) should reduce confidence slightly.
+### B) Guest Reviews (Quality Assurance - CRITICAL)
+**IMPORTANT**: Rating thresholds are STRICT. High standards must be enforced.
 
-### C) Value for Money (Price vs Quality)
-- Calculate total price from rate.daily_prices (array of price strings, one per night).
-- Sum daily_prices to get total stay cost, divide by number of nights for avg per night.
-- Compare hotels relative to the market: better ratings and higher tier at slightly higher price is preferred.
-- If calculated price is outside the user's price range, apply a penalty unless the quality is exceptional.
-- Do NOT rank purely by lowest price — prioritize value (quality per ruble/dollar).
+**Overall Rating (avg_rating) - Primary Factor:**
+- **avg_rating >= 9.5**: EXCELLENT - neutral or small bonus +3 to +5
+- **9.0 <= avg_rating < 9.5**: GOOD - penalty -5 to -10 (not excellent enough)
+- **8.5 <= avg_rating < 9.0**: ACCEPTABLE - penalty -15 to -20 (below good standards)
+- **8.0 <= avg_rating < 8.5**: WEAK - penalty -25 to -30 (significantly below standards)
+- **avg_rating < 8.0**: POOR - severe penalty -35 to -45 (unacceptable quality)
+- **avg_rating < 7.0**: REJECT - penalty -50 or more (critically low satisfaction)
 
-### D) Building Age & Renovation (Quality Signal)
-- Use facts_summary.year_built and facts_summary.year_renovated as signals of maintenance and modernization.
-- Prefer more recently renovated properties when other factors are similar.
-- Very old hotels (built before 1990) with no renovation should receive a small penalty unless reviews are excellent.
+**Cleanness Score (detailed_averages.cleanness) - MOST IMPORTANT SUB-SCORE:**
+Reviews show cleanness has the strongest correlation with quality. This is CRITICAL.
+- **cleanness >= 9.5**: bonus +10 to +15 (exceptional cleanliness)
+- **9.0 <= cleanness < 9.5**: bonus +5 to +8 (very clean)
+- **8.5 <= cleanness < 9.0**: neutral to +2 (acceptable)
+- **8.0 <= cleanness < 8.5**: penalty -5 to -10 (below standards)
+- **cleanness < 8.0**: severe penalty -15 to -25 (poor cleanliness - major issue)
+
+**Room Quality Score (detailed_averages.room) - Second Most Important:**
+- **room >= 9.5**: bonus +8 to +10
+- **9.0 <= room < 9.5**: bonus +3 to +5
+- **8.5 <= room < 9.0**: neutral
+- **room < 8.5**: penalty -5 to -15
+
+**Other detailed_averages (services, price, meal, wifi, hygiene):**
+- Use as reinforcing factors
+- Low scores (< 8.0) add small penalties -3 to -5 each
+- High scores (> 9.0) add small bonuses +2 to +3 each
+
+**Review Volume (Statistical Reliability):**
+- **< 5 reviews**: SEVERE penalty -20 to -25 (statistically unreliable, even if rating is 10.0)
+- **5-9 reviews**: penalty -10 to -15 (low confidence in rating)
+- **10-19 reviews**: penalty -5 (acceptable but limited data)
+- **20-49 reviews**: neutral (good sample size)
+- **50+ reviews**: bonus +3 to +5 (highly reliable data)
+
+### C) Price Sweet Spot
+**CRITICAL: Each value in rate.daily_prices array is price PER NIGHT. User's min_price and max_price are also PER NIGHT.**
+
+**Calculate average price per night:**
+1. Sum all values from rate.daily_prices array to get total stay cost
+2. Divide by number of nights (length of daily_prices array) to get avg_per_night
+3. Compare avg_per_night with min_price and max_price (all are per-night values)
+
+**Price positioning logic (SYMMETRIC - ideal is middle of range) - CRITICAL, STRONGEST FACTOR:**
+- If user provided price range (min_price to max_price):
+  - Let range = max_price - min_price
+  - Let position = (avg_per_night - min_price) / range
+  - **IDEAL: 45-55% (middle of range)**: MASSIVE BONUS +15 to +25 points (best value-for-money)
+  - **Good: 35-45% or 55-65%**: good bonus +8 to +12 (acceptable positioning)
+  - **Acceptable: 25-35% or 65-75%**: small bonus +3 to +5
+  - **Too far from middle: 15-25% or 75-85%**: penalty -10 to -15 (suboptimal value)
+  - **Extreme: <15% or >85%**: SEVERE penalty -25 to -35 (too cheap OR too expensive = bad)
+  - **Below min_price**: SEVERE penalty -35 to -45 (quality issues or hidden fees)
+  - **Slightly above max** (max to max*1.2): penalty -20 to -25
+  - **Far above max** (>max*1.2): MASSIVE penalty -40 to -50 (poor value for money)
+
+**Example**: Range 3000-15000 RUB per night (range = 12000)
+- IDEAL: 8400-9600 RUB (45-55%) → BONUS +15 to +25
+- Good: 7200-8400 or 9600-10800 RUB (35-45% or 55-65%) → bonus +8 to +12
+- Acceptable: 6000-7200 or 10800-12000 RUB (25-35% or 65-75%) → bonus +3 to +5
+- Too far: 4800-6000 or 12000-13200 RUB (15-25% or 75-85%) → penalty -10 to -15
+- Extreme: <4800 or >13200 RUB (<15% or >85%) → penalty -25 to -35
+- Below min: <3000 RUB → penalty -35 to -45
+- Slightly over: 15000-18000 RUB → penalty -20 to -25
+- Far over: >18000 RUB → penalty -40 to -50
+
+**Value for money**: Better ratings and higher tier at mid-range price > cheapest option.
+
+### D) Star Rating (Quality Proxy - VERY IMPORTANT)
+Stars (field: stars) are a strong quality indicator and MUST significantly impact rankings.
+
+**Scoring by stars:**
+- **5 stars**: Premium quality baseline, bonus +20 points
+- **4 stars**: Good quality baseline, bonus +12 points
+- **3 stars**: Acceptable quality baseline, penalty -5 points
+- **2 stars**: Budget quality, penalty -15 points
+- **1 star or 0 stars**: Low quality, penalty -25 points
+
+**Anti-downgrade rule:**
+- If 4-5★ hotels exist in budget, penalize 2-3★ hotels by -10 additional points
+- If 3★ hotels exist in budget, penalize 1-2★ hotels by -15 additional points
+
+**Stars + Rating interaction:**
+- High stars (4-5★) but low rating (<8.0): "quality trap" - penalty -20
+- Low stars (2-3★) but high rating (9.5+): "hidden gem" - bonus +5 (only for exceptional 9.5+, not 9.0)
 
 ### E) Property Type / Tier Preference
-Tier order (higher is better):
-1. Castle, Resort, Boutique_and_Design, Villas_and_Bungalows, Hotel
-2. Apart-hotel, Sanatorium, Mini-hotel, Apartment, Guesthouse
-3. BNB, Glamping, Cottages_and_Houses, Farm
-4. Hostel, Camping, Unspecified
+Use field: kind
 
-Penalize Tier 3-4 unless user explicitly wants budget/hostel-style or budget is extremely low.
+**Tier classification:**
+- **Tier 1 (Premium)**: Resort, Castle, Boutique_and_Design, Villas_and_Bungalows, Hotel - bonus +5 to +10
+- **Tier 2 (Mid)**: Apart-hotel, Sanatorium, Mini-hotel, Apartment, Guesthouse - neutral (0)
+- **Tier 3 (Budget)**: BNB, Glamping, Cottages_and_Houses, Farm - penalty -10
+- **Tier 4 (Low)**: Hostel, Camping, Unspecified - penalty -20
 
-### F) Preferences and Amenities
-- Match explicit preferences from user (pool, parking, kitchen, pets, quiet, breakfast, etc.).
-- Use metapolicy_struct for major policies:
-  - parking (availability, cost)
-  - pets (allowed, restrictions)
-  - extra_bed (available, cost)
-  - meal (breakfast options, costs)
-  - internet (wifi availability, cost)
-  - children (policies, age limits)
-- Use rate.amenities_data (array of amenity names) for room-specific features.
-- Use rate.meal_data (meal type and breakfast flag) to match breakfast preferences.
-- Missing must-have amenities should incur strong penalties. Nice-to-haves give small boosts.
+**Override:** If user explicitly wants budget/hostel or mentions "apartment", reduce tier penalties.
 
-### G) Policies and Fees
+### F) Hotel Chain / Brand (Quality Signal)
+Use field: hotel_chain to identify branded hotel chains.
+
+**Known International/National Chains** (bonus for reliability and quality standards):
+- **Premium chains**: Marriott, Hilton, Hyatt, IHG, Accor (Sofitel, Novotel, Ibis), Radisson → bonus +8 to +12
+- **Mid-tier chains**: Best Western, Holiday Inn, Courtyard, Hampton Inn → bonus +5 to +8
+- **Budget chains**: Ibis Budget, Motel 6 → bonus +3 to +5
+- **Regional chains**: AZIMUT Hotels, Cosmos Hotels → bonus +5 to +8
+
+**Benefits of branded chains:**
+- Consistent quality standards across properties
+- Reliable service and professional management
+- Predictable guest experience
+- Better accountability
+
+**Application:**
+- If hotel_chain != "No chain" and matches known brand → apply bonus
+- Combine with stars and rating for final assessment
+- Branded hotels with poor reviews still get penalized for low rating
+
+### G) Amenities Matching (CRITICAL - USER REQUIREMENTS)
+**This is MANDATORY matching. User preferences are not optional.**
+
+**Step 1: Parse user preferences** {user_preferences}
+Identify EXPLICIT requirements:
+- Transportation: parking, garage, airport shuttle
+- Facilities: pool, gym, spa, sauna, kitchen, washing machine
+- Services: breakfast, restaurant, room service
+- Accessibility: elevator, wheelchair access
+- Policies: pets allowed, smoking/non-smoking
+- Internet: wifi, high-speed internet
+- Other: quiet location, sea view, balcony
+
+**Step 2: Check availability**
+Sources in order of priority:
+1. rate.amenities_data (array) - room-specific amenities
+2. metapolicy_struct - hotel-wide policies (parking, pets, meal, internet, children)
+3. rate.meal_data - breakfast availability
+4. reviews text (plus/minus) - mentions of amenities
+
+**Step 3: Apply penalties/bonuses**
+- **Explicit requirement PRESENT**: bonus +5 to +10 per requirement
+- **Explicit requirement MISSING**: penalty -15 to -30 per requirement (SEVERE)
+- **Nice-to-have present**: bonus +2 to +5
+- **Contradicts requirement** (e.g., user wants quiet, reviews mention noise): penalty -20
+
+**Examples:**
+- User: "pool, parking" → hotel has both → bonus +15
+- User: "kitchen, washing machine" → hotel missing kitchen → penalty -25
+- User: "quiet" → reviews mention "noisy street" → penalty -20
+
+### H) Location Quality
+Use multiple signals:
+
+**Primary source: reviews.detailed_averages.location** (0-10 scale)
+- **9.0-10.0**: Excellent location, bonus +10
+- **8.0-8.9**: Good location, bonus +5
+- **7.0-7.9**: Acceptable location, neutral
+- **<7.0**: Poor location, penalty -10
+
+**Secondary: Address analysis**
+Parse address field for distance clues:
+- City center keywords: "центр", "center", "downtown" → bonus +5
+- Peripheral keywords: "окраина", "suburb", "airport area" → penalty -5
+- Specific landmarks: "near beach", "sea view", "набережная" → bonus if relevant to user
+
+**Interaction with user preferences:**
+- If user mentions "city center" and location score is high → extra bonus +5
+- If user wants "quiet" but address suggests busy area → penalty -10
+
+### I) Building Age & Renovation (Quality Signal)
+- Use facts_summary.year_built and facts_summary.year_renovated as signals of maintenance and modernization.
+- Prefer more recently renovated properties when other factors are similar.
+- Very old hotels (built before 1990) with no renovation should receive a small penalty (-3 to -5) unless reviews are excellent.
+
+### J) Policies and Fees
 - Check rate.deposit for deposit requirements (can be a barrier for some users).
 - Metapolicy_struct contains broader hotel policies — use them to assess guest-friendliness.
-- If user values flexibility and deposit is required, apply small penalty.
+- If user values flexibility and deposit is required, apply small penalty (-3 to -5).
 
 ## Selecting selected_rate_hash (MANDATORY)
 Each hotel includes rates[] array. You MUST select the best rate from the PROVIDED list only.
@@ -124,19 +265,10 @@ Pick the rate that best satisfies:
 
 ## top_reasons and score_penalties
 Provide 2-4 concise points each.
-- **top_reasons**: why this hotel is a strong value (high rating, excellent reviews, good fit, favorable policies, amenities match).
-- **score_penalties**: what prevents a perfect score (price slightly high, rating not ideal, missing desired feature, deposit required, older property).
+- **top_reasons**: why this hotel is a strong value (high rating, excellent cleanness, good fit, favorable policies, amenities match).
+- **score_penalties**: what prevents a perfect score (rating below 9.5, cleanness not perfect, price positioning, missing features).
 
-Keep them specific and grounded in provided fields. Use concrete numbers (e.g., "8.9 rating", "renovated 2020").
-
-## Summary Requirements (4-6 sentences)
-Must include:
-- A high-level market overview (dominant accommodation types and rough pricing level from the analyzed set).
-- The price range analyzed (from the input).
-- An explicit example of a rejected property with name, hotel_id, avg_rating, and specific reason (e.g., low rating, poor reviews, bad fit).
-- A closing sentence emphasizing that final picks prioritize strong quality and best value over cheap but lower-quality options.
-
-Do NOT mention tiers in the summary.
+Keep them specific and grounded in provided fields. Use concrete numbers (e.g., "8.9 rating - below 9.5 threshold", "cleanness 9.7 - exceptional").
 
 ## Final Output
 Return ONLY valid JSON that matches the schema. No extra keys, no markdown, no explanations outside JSON.

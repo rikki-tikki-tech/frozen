@@ -49,17 +49,15 @@ class HotelScore(BaseModel):
 
 
 class ScoringResponse(BaseModel):
-    """LLM response with top hotels and summary."""
+    """LLM response with top scored hotels."""
 
     results: list[HotelScore]
-    summary: str
 
 
 class ScoringResultDict(TypedDict):
     """Result of score_hotels function."""
 
     results: list[HotelScoreDict]
-    summary: str
     error: str | None
     estimated_tokens: int
 
@@ -270,11 +268,10 @@ async def score_hotels(  # noqa: PLR0913
     retries: int = DEFAULT_RETRIES,
     top_count: int = TOP_HOTELS_COUNT,
 ) -> ScoringResultDict:
-    """Score hotels and return top N with summary.
+    """Score hotels and return top N.
 
-    Single LLM call that analyzes all hotels and returns:
-    - Top N scored hotels (configurable via top_count)
-    - Summary explaining price range, trade-offs, why cheaper options are worse
+    Single LLM call that analyzes all hotels and returns
+    top N scored hotels (configurable via top_count).
 
     Args:
         hotels: List of combined hotel data to score.
@@ -290,7 +287,7 @@ async def score_hotels(  # noqa: PLR0913
         top_count: Number of top hotels to return from LLM.
 
     Returns:
-        ScoringResultDict with results, summary, error, and token estimate.
+        ScoringResultDict with results, error, and token estimate.
     """
     # Resolve model name for tokenizer and agent
     resolved_model = model_name or _get_default_model()
@@ -330,14 +327,12 @@ async def score_hotels(  # noqa: PLR0913
             ]
             return {
                 "results": results,
-                "summary": response.output.summary,
                 "error": None,
                 "estimated_tokens": estimated_tokens,
             }
 
     return {
         "results": [],
-        "summary": "",
         "error": last_error,
         "estimated_tokens": estimated_tokens,
     }
