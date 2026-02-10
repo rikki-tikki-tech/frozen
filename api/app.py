@@ -33,7 +33,7 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def root() -> dict[str, Any]:
-        return {"message": "Hello World"}
+        return {"message": "Hello World v2"}
 
     @app.get("/regions/suggest")
     async def suggest_regions(

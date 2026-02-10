@@ -1,6 +1,7 @@
 """Hotel search streaming pipeline."""
 
 from collections.abc import AsyncIterator
+from typing import Any, cast
 
 import httpx
 from pydantic import ValidationError
@@ -176,7 +177,7 @@ async def search_stream(  # noqa: PLR0915
         scored_hotels = finalize_scored_hotels(top_hotels, scoring_result["results"])
         yield sse_event(sse_message(DoneEvent(
             total_scored=len(scored_hotels),
-            hotels=scored_hotels,
+            hotels=cast("list[dict[str, Any]]", scored_hotels),
         )))
 
     except ETGAPIError as e:

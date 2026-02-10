@@ -64,7 +64,7 @@ Notebook импортирует всё из общих модулей (`etg`, `s
 ## API-сервер
 
 ```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
+uv run fastapi dev
 ```
 
 ### Эндпоинты
@@ -104,7 +104,7 @@ curl -X POST http://localhost:8000/hotels/search/stream \
 ## Структура проекта
 
 ```
-main.py              — точка входа (uvicorn)
+main.py              — точка входа
 config.py            — конфигурация из переменных окружения
 search_hotels.ipynb  — Jupyter notebook для исследования и отладки
 deploy.sh            — скрипт деплоя на GCP VM
