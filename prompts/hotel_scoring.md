@@ -107,28 +107,28 @@ Reviews show cleanness has the strongest correlation with quality. This is CRITI
 2. Divide by number of nights (length of daily_prices array) to get avg_per_night
 3. Compare avg_per_night with min_price and max_price (all are per-night values)
 
-**Price positioning logic (SYMMETRIC - ideal is middle of range) - CRITICAL, STRONGEST FACTOR:**
+**Price positioning logic (GAUSSIAN - ideal is 70% of range) - CRITICAL, STRONGEST FACTOR:**
 - If user provided price range (min_price to max_price):
   - Let range = max_price - min_price
   - Let position = (avg_per_night - min_price) / range
-  - **IDEAL: 45-55% (middle of range)**: MASSIVE BONUS +15 to +25 points (best value-for-money)
-  - **Good: 35-45% or 55-65%**: good bonus +8 to +12 (acceptable positioning)
-  - **Acceptable: 25-35% or 65-75%**: small bonus +3 to +5
-  - **Too far from middle: 15-25% or 75-85%**: penalty -10 to -15 (suboptimal value)
-  - **Extreme: <15% or >85%**: SEVERE penalty -25 to -35 (too cheap OR too expensive = bad)
+  - **IDEAL: 65-75% (sweet spot at 70%)**: MASSIVE BONUS +15 to +25 points (best value-for-money)
+  - **Good: 55-65% or 75-85%**: good bonus +8 to +12 (acceptable positioning)
+  - **Acceptable: 45-55% or 85-95%**: small bonus +3 to +5
+  - **Too far from ideal: 35-45%**: penalty -10 to -15 (suboptimal value, too cheap)
+  - **Extreme: <35% or >95%**: SEVERE penalty -25 to -35 (too cheap = quality issues OR too expensive = bad value)
   - **Below min_price**: SEVERE penalty -35 to -45 (quality issues or hidden fees)
-  - **Slightly above max** (max to max*1.2): penalty -20 to -25
-  - **Far above max** (>max*1.2): MASSIVE penalty -40 to -50 (poor value for money)
+  - **Slightly above max** (max to max*1.05): small penalty -5 to -10
+  - **Far above max** (>max*1.05): MASSIVE penalty -40 to -50 (poor value for money)
 
-**Example**: Range 3000-15000 RUB per night (range = 12000)
-- IDEAL: 8400-9600 RUB (45-55%) → BONUS +15 to +25
-- Good: 7200-8400 or 9600-10800 RUB (35-45% or 55-65%) → bonus +8 to +12
-- Acceptable: 6000-7200 or 10800-12000 RUB (25-35% or 65-75%) → bonus +3 to +5
-- Too far: 4800-6000 or 12000-13200 RUB (15-25% or 75-85%) → penalty -10 to -15
-- Extreme: <4800 or >13200 RUB (<15% or >85%) → penalty -25 to -35
+**Example**: Range 3000-15000 RUB per night (range = 12000, ideal = 70% = 11400 RUB)
+- IDEAL: 10800-12000 RUB (65-75%) → BONUS +15 to +25
+- Good: 9600-10800 or 12000-13200 RUB (55-65% or 75-85%) → bonus +8 to +12
+- Acceptable: 8400-9600 or 13200-14400 RUB (45-55% or 85-95%) → bonus +3 to +5
+- Too cheap: 7200-8400 RUB (35-45%) → penalty -10 to -15
+- Extreme: <7200 or >14400 RUB (<35% or >95%) → penalty -25 to -35
 - Below min: <3000 RUB → penalty -35 to -45
-- Slightly over: 15000-18000 RUB → penalty -20 to -25
-- Far over: >18000 RUB → penalty -40 to -50
+- Slightly over: 15000-15750 RUB → penalty -5 to -10
+- Far over: >15750 RUB → penalty -40 to -50
 
 **Value for money**: Better ratings and higher tier at mid-range price > cheapest option.
 
@@ -269,6 +269,3 @@ Provide 2-4 concise points each.
 - **score_penalties**: what prevents a perfect score (rating below 9.5, cleanness not perfect, price positioning, missing features).
 
 Keep them specific and grounded in provided fields. Use concrete numbers (e.g., "8.9 rating - below 9.5 threshold", "cleanness 9.7 - exceptional").
-
-## Final Output
-Return ONLY valid JSON that matches the schema. No extra keys, no markdown, no explanations outside JSON.

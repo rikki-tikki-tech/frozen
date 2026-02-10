@@ -10,11 +10,8 @@ FastAPI service for hotel search and AI-powered scoring via ETG B2B API v3 (Ostr
 # Install dependencies
 uv sync
 
-# Run API server
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
-
-# Run with auto-reload (development)
-uv run uvicorn main:app --reload
+# Run API server (development, auto-reload)
+uv run fastapi dev
 
 # Verify imports
 uv run python -c "from api import create_app; create_app()"

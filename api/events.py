@@ -2,12 +2,11 @@
 
 from datetime import date
 from enum import Enum
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel
 
 from etg import GuestRoom
-from services import HotelScored
 from utils import SSEMessage
 
 
@@ -138,11 +137,11 @@ class ErrorEvent(SSEBaseEvent):
 
 
 class DoneEvent(SSEBaseEvent):
-    """Search completed."""
+    """Search completed with scored hotels."""
 
     event_type: ClassVar[EventType] = EventType.DONE
     total_scored: int
-    hotels: list[HotelScored]
+    hotels: list[dict[str, Any]]
 
 
 SSEEvent = (
