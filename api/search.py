@@ -39,9 +39,10 @@ from .events import (
 from .schemas import HotelSearchRequest
 
 DEFAULT_PREFERENCES = "Лучшее соотношение цены и качества, хорошие отзывы, удобное расположение"
+HOTELS_SEARCH_LIMIT = 800
 PRESORT_LIMIT = 100
 MAX_REVIEWS_PER_HOTEL = 30
-REVIEW_TEXT_MAX_LENGTH = 100
+REVIEW_TEXT_MAX_LENGTH = 512
 
 
 async def search_stream(  # noqa: PLR0915
@@ -85,7 +86,7 @@ async def search_stream(  # noqa: PLR0915
             guests=guests,
             currency=currency,
             language=language,
-            hotels_limit=request.hotels_limit,
+            hotels_limit=HOTELS_SEARCH_LIMIT,
         )
         all_hotels = search_results.get("hotels", [])
         total_available = search_results.get("total_hotels", len(all_hotels))
