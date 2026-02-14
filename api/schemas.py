@@ -45,9 +45,6 @@ class HotelSearchRequest(BaseModel):
         pattern=r"^[a-z]{2}$",
         description="Код языка (ISO 639-1)",
     )
-    hotels_limit: int | None = Field(
-        default=None, gt=0, le=1000, description="Лимит отелей в результате"
-    )
     min_price_per_night: float | None = Field(
         default=None, gt=0, description="Минимальная цена за ночь"
     )
