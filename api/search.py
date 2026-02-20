@@ -61,6 +61,7 @@ async def search_stream(  # noqa: PLR0915
     min_price_per_night = request.min_price_per_night
     max_price_per_night = request.max_price_per_night
     user_preferences = request.user_preferences
+    top_hotels_count = request.top_hotels
 
     try:
         # Phase 1: Search hotels
@@ -161,6 +162,7 @@ async def search_stream(  # noqa: PLR0915
             min_price=min_price_per_night,
             max_price=max_price_per_night,
             currency=currency,
+            top_count=top_hotels_count,
         )
 
         if scoring_result["error"]:
