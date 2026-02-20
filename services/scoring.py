@@ -74,6 +74,7 @@ def _load_scoring_prompt() -> str:
 SCORING_PROMPT_TEMPLATE = _load_scoring_prompt()
 
 TOP_HOTELS_COUNT = 10
+MAX_TOP_HOTELS_COUNT = 12
 DEFAULT_RETRIES = 3
 
 
@@ -292,7 +293,7 @@ async def score_hotels(  # noqa: PLR0913
     # Resolve model name for tokenizer and agent
     resolved_model = model_name or _get_default_model()
     agent = _create_agent(resolved_model)
-    top_count = min(top_count, len(hotels))
+    top_count = min(top_count, len(hotels), MAX_TOP_HOTELS_COUNT)
 
     hotels_for_llm = [
         prepare_hotel_for_llm(h, min_price, max_price, max_reviews, review_text_max_length)

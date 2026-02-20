@@ -54,6 +54,9 @@ class HotelSearchRequest(BaseModel):
     user_preferences: str | None = Field(
         default=None, description="Предпочтения пользователя для AI-скоринга"
     )
+    top_hotels: int = Field(
+        default=10, ge=1, le=12, description="Количество отелей в результате (макс. 12)"
+    )
 
     @model_validator(mode="after")
     def validate_checkout_after_checkin(self) -> "HotelSearchRequest":
